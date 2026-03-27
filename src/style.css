@@ -1,0 +1,396 @@
+@font-face {
+  font-family: 'HandwritingTitle';
+  src: url('/assets/fonts/RockSalt-Regular.ttf') format('truetype');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'HandwritingBody';
+  src: url('/assets/fonts/NothingYouCouldDo-Regular.ttf') format('truetype');
+  font-display: swap;
+}
+
+:root {
+  --bg: #3f0707;
+  --text: #ff9b9b;
+  --line: #ff9b9b;
+  --muted: #ba3c3c;
+  --danger: #ba3c3c;
+  --accent: #ba3c3c;
+  --grunge-drop-shadow: drop-shadow(0 1px 0 #000) drop-shadow(1px 2px 0 #000) drop-shadow(-1px 3px 0 #000) drop-shadow(2px 4px 0 #000);
+  --grunge-text-shadow: 1px 1px 0 #000, -1px 2px 0 #000, 2px 3px 0 #000;
+
+  --title-offset-y: -24px;
+  --title-font-size: 108px;
+  --menu-offset-y: 0px;
+  --menu-gap: 10px;
+  --button-width: 320px;
+  --button-height: 52px;
+  --button-font-size: 28px;
+  --setup-width: 440px;
+  --setup-gap: 18px;
+  --setup-title-size: 42px;
+  --setup-label-size: 18px;
+  --setup-field-size: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: 'HandwritingBody', monospace;
+}
+
+#app {
+  position: relative;
+  min-height: 100svh;
+}
+
+.menu-screen {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  background-image: url('/assets/ui/main-menu-backdrop.png');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+#menu-title {
+  margin: 0;
+  transform: translateY(var(--title-offset-y));
+  color: var(--accent);
+  font-family: 'HandwritingTitle', monospace;
+  font-size: var(--title-font-size);
+  line-height: 1;
+  letter-spacing: 4px;
+  font-weight: 400;
+  text-shadow: var(--grunge-text-shadow);
+}
+
+.menu-nav {
+  transform: translateY(var(--menu-offset-y));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--menu-gap);
+  width: 100%;
+}
+
+.menu-button {
+  position: relative;
+  width: min(var(--button-width), 90vw);
+  min-height: var(--button-height);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: 'HandwritingBody', monospace;
+  font-size: var(--button-font-size);
+  line-height: 1;
+  letter-spacing: 1px;
+  padding: 8px 12px;
+  cursor: pointer;
+  filter: var(--grunge-drop-shadow);
+  text-shadow: var(--grunge-text-shadow);
+}
+
+.menu-button:hover {
+  color: var(--accent);
+}
+
+.menu-button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.setup-screen {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 24px 32px;
+}
+
+.setup-back {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: 'HandwritingBody', monospace;
+  font-size: 22px;
+  letter-spacing: 1px;
+  padding: 4px;
+  cursor: pointer;
+  filter: var(--grunge-drop-shadow);
+  text-shadow: var(--grunge-text-shadow);
+}
+
+.setup-back:hover,
+.setup-back:focus-visible {
+  color: var(--muted);
+}
+
+.setup-back:focus-visible,
+.setup-text-input:focus-visible,
+.stepper-btn:focus-visible,
+.option-btn:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.setup-panel {
+  width: min(var(--setup-width), 100%);
+}
+
+.setup-header {
+  margin-bottom: 24px;
+}
+
+.setup-kicker {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 18px;
+  letter-spacing: 2px;
+}
+
+#setup-title {
+  margin: 0;
+  color: var(--accent);
+  font-family: 'HandwritingTitle', monospace;
+  font-size: var(--setup-title-size);
+  line-height: 1;
+  letter-spacing: 2px;
+  font-weight: 400;
+  text-shadow: var(--grunge-text-shadow);
+}
+
+.setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--setup-gap);
+}
+
+.setup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-label {
+  color: var(--muted);
+  font-size: var(--setup-label-size);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.setup-text-input,
+.option-btn,
+.stepper-btn,
+.stepper-value {
+  min-height: 52px;
+  border: 2px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: 'HandwritingBody', monospace;
+  font-size: var(--setup-field-size);
+  filter: var(--grunge-drop-shadow);
+  text-shadow: var(--grunge-text-shadow);
+}
+
+.setup-text-input {
+  width: 100%;
+  padding: 10px 12px;
+}
+
+.setup-text-input::placeholder {
+  color: var(--muted);
+}
+
+.option-group {
+  display: flex;
+  gap: 10px;
+}
+
+.option-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.option-btn.is-active {
+  background: transparent;
+  color: var(--text);
+}
+
+.option-btn.is-locked {
+  color: var(--muted);
+  border-color: var(--muted);
+}
+
+.option-btn[disabled] {
+  opacity: 1;
+  cursor: default;
+}
+
+.option-badge {
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+
+.setup-description {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: 52px 1fr 52px;
+  gap: 10px;
+}
+
+.stepper-btn {
+  position: relative;
+  padding: 0;
+  cursor: pointer;
+}
+
+.stepper-value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+}
+
+.setup-error {
+  min-height: 24px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 18px;
+}
+
+.setup-feedback {
+  min-height: 24px;
+  margin: 0;
+  font-size: 18px;
+}
+
+.setup-feedback.is-error {
+  color: var(--danger);
+}
+
+.setup-feedback.is-success {
+  color: var(--muted);
+}
+
+.setup-time-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 10px;
+}
+
+.setup-next {
+  margin-top: 4px;
+}
+
+/* -- texture backdrops -- */
+
+[data-tex-backdrop] {
+  background-image: var(--backdrop-tex);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  border-color: transparent;
+}
+
+/* -- hover overlays -- */
+
+[data-tex-hover] {
+  overflow: visible;
+}
+
+[data-tex-hover]::after {
+  content: '';
+  position: absolute;
+  inset: calc(var(--hover-pad, 16px) * -1);
+  background-image: var(--hover-tex);
+  background-size: 100% 100%;
+  background-position: center;
+  background-repeat: no-repeat;
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-tex-hover]:hover::after {
+  opacity: 0.55;
+}
+
+/* -- selection marks -- */
+
+[data-tex-selection].is-active::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--selection-tex);
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  mix-blend-mode: screen;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .setup-screen {
+    align-items: flex-start;
+  }
+
+  .setup-panel {
+    margin-top: 48px;
+  }
+
+  .option-group {
+    flex-direction: column;
+  }
+
+  .setup-time-group {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --title-font-size: 76px;
+    --button-font-size: 22px;
+    --button-height: 48px;
+    --button-width: 260px;
+  }
+
+  #menu-title {
+    letter-spacing: 2px;
+  }
+}
