@@ -1,5 +1,3 @@
-import { playSplatter } from './ui/bloodSplatter'
-
 const screens = new Map()
 
 let currentScreen = null
@@ -10,8 +8,6 @@ export function registerScreen(name, mount) {
 }
 
 export function showScreen(name, props = {}) {
-  playSplatter()
-
   const app = document.querySelector('#app')
   const mount = screens.get(name)
 

@@ -77,7 +77,7 @@ async function handleNext(app, submitButton) {
   try {
     await saveGame(structuredClone(state))
     console.info('SETTING setup saved.', state)
-    setFeedback(app, 'Setting saved. More setup options are coming soon.')
+    showScreen('setup-cast')
   } catch (error) {
     console.error('Failed to save SETTING setup.', error)
     setFeedback(app, 'Could not save right now. Try again.', 'error')
