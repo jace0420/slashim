@@ -4,10 +4,13 @@ import { Pane } from 'tweakpane'
 import { showScreen } from '../router'
 import { createPixiApp } from '../rendering/createPixiApp'
 import { createLightingFilter, DEFAULT_LIGHT_PARAMS, createFlicker, DEFAULT_FLICKER_PARAMS } from '../rendering/lighting'
+import { createAsciiGrid } from '../rendering/asciiGrid'
+import { buildCastPanel, buildNarrativePanel } from '../ui/panels'
+import { generateMap, debugPrintMap } from '../generation/mapGenerator'
+import { state } from '../store/gameState'
 
 const DIFFUSE_URL = '/assets/ui/game-screen-diffuse.png'
 
-// casual starting positions — dev adjusts with tweakpane (1920×1080 baseline)
 const DEFAULT_PANEL_PARAMS = {
   narrative: { x: 668,   y: 329, w: 192, h: 312 },
   cast:      { x: 445, y: 329,  w: 192, h: 312 },
@@ -72,8 +75,10 @@ export function mountGame(container) {
   let backdrop = null
   let sceneContainer = null
   let panels = {}
+  let asciiGrid = null
   let followCursor = false
   let mouseMoveHandler = null
+  let wheelHandler = null
   let cleanedUp = false
 
   // flicker params live on this object so tweakpane bindings mutate it in-place
@@ -138,15 +143,28 @@ export function mountGame(container) {
     coverSprite(backdrop, pixiApp.renderer.width, pixiApp.renderer.height)
     sceneContainer.addChild(backdrop)
 
-    // build the four placeholder UI panels above the backdrop
-    panels.narrative = buildPanel('NARRATIVE PANE', params.panels.narrative)
-    panels.cast      = buildPanel('CAST PANE',      params.panels.cast)
+    // font must be loaded before any panel Text objects are created
+    await Assets.load({ alias: 'NothingYouCouldDo', src: '/assets/fonts/NothingYouCouldDo-Regular.ttf' })
+
+    // cast + narrative use functional panels; location remains placeholder; areaMap hosts the generated map
+    panels.narrative = buildNarrativePanel(params.panels.narrative)
+    panels.cast      = buildCastPanel(params.panels.cast, state.cast)
     panels.location  = buildPanel('LOCATION PANE',  params.panels.location)
     panels.areaMap   = buildPanel('AREA MAP',        params.panels.areaMap)
 
     for (const panel of Object.values(panels)) {
       sceneContainer.addChild(panel.container)
     }
+
+    // generate and render the procedural map into the area map panel
+    const mapSeed = state.mapSeed || String(Date.now())
+    state.mapSeed = mapSeed
+    state.map = generateMap('manor', mapSeed)
+    debugPrintMap(state.map)
+
+    asciiGrid = createAsciiGrid(params.panels.areaMap, state.map.width, state.map.height)
+    asciiGrid.renderFullMap(state.map)
+    panels.areaMap.container.addChild(asciiGrid.container)
 
     pixiApp.stage.addChild(sceneContainer)
 
@@ -161,6 +179,28 @@ export function mountGame(container) {
 
     mouseMoveHandler = onMouseMove
     window.addEventListener('mousemove', mouseMoveHandler)
+
+    // wheel scrolls whichever panel the cursor is over
+    const scrollablePanels = [
+      { ref: panels.cast,      p: params.panels.cast },
+      { ref: panels.narrative, p: params.panels.narrative },
+    ]
+    wheelHandler = (e) => {
+      if (!pixiApp) return
+      const rect = pixiApp.canvas.getBoundingClientRect()
+      const sx = pixiApp.renderer.width / rect.width
+      const sy = pixiApp.renderer.height / rect.height
+      const cx = (e.clientX - rect.left) * sx
+      const cy = (e.clientY - rect.top) * sy
+      for (const { ref, p } of scrollablePanels) {
+        if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) {
+          ref.scroll(e.deltaY * 0.5)
+          e.preventDefault()
+          break
+        }
+      }
+    }
+    pixiApp.canvas.addEventListener('wheel', wheelHandler, { passive: false })
 
     if (shouldShowTweakPane()) {
       setupTweakPane()
@@ -212,6 +252,32 @@ export function mountGame(container) {
       folder.addBinding(p, 'w', { min: 50, max: 1920, step: 1, label: 'w' }).on('change', () => panel.redraw())
       folder.addBinding(p, 'h', { min: 50, max: 1080, step: 1, label: 'h' }).on('change', () => panel.redraw())
     }
+
+    // map generation debug controls
+    const mapPane = new Pane({ title: 'Map Generation' })
+    const mapParams = { seed: state.mapSeed || '' }
+    mapPane.addBinding(mapParams, 'seed', { label: 'seed' })
+    mapPane.addButton({ title: 'Regenerate' }).on('click', () => {
+      const newSeed = mapParams.seed || String(Date.now())
+      state.mapSeed = newSeed
+      mapParams.seed = newSeed
+      state.map = generateMap('manor', newSeed)
+      debugPrintMap(state.map)
+
+      // rebuild the ascii grid with the new map
+      if (asciiGrid) {
+        panels.areaMap.container.removeChild(asciiGrid.container)
+        asciiGrid.destroy()
+      }
+      asciiGrid = createAsciiGrid(params.panels.areaMap, state.map.width, state.map.height)
+      asciiGrid.renderFullMap(state.map)
+      panels.areaMap.container.addChild(asciiGrid.container)
+      mapPane.refresh()
+    })
+    mapPane.addButton({ title: 'Random Seed' }).on('click', () => {
+      mapParams.seed = String(Date.now())
+      mapPane.refresh()
+    })
   }
 
   // kick off async init — any errors surface in the console
@@ -226,8 +292,12 @@ export function mountGame(container) {
     if (mouseMoveHandler) {
       window.removeEventListener('mousemove', mouseMoveHandler)
     }
+    if (wheelHandler && pixiApp) {
+      pixiApp.canvas.removeEventListener('wheel', wheelHandler)
+    }
 
     flicker?.stop()
+    asciiGrid?.destroy()
     pane?.dispose()
     uiPane?.dispose()
 

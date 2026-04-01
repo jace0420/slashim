@@ -1,0 +1,119 @@
+[
+  {
+    "id": "foyer",
+    "label": "Foyer",
+    "type": "common",
+    "rarity": 1.0,
+    "count": { "min": 1, "max": 1 },
+    "size": { "minW": 5, "maxW": 7, "minH": 5, "maxH": 7 },
+    "bias": { "adjacentTo": [], "zone": "center" }
+  },
+  {
+    "id": "living-room",
+    "label": "Living Room",
+    "type": "common",
+    "rarity": 1.0,
+    "count": { "min": 1, "max": 1 },
+    "size": { "minW": 6, "maxW": 9, "minH": 5, "maxH": 7 },
+    "bias": { "adjacentTo": ["foyer"], "zone": "center" }
+  },
+  {
+    "id": "kitchen",
+    "label": "Kitchen",
+    "type": "utility",
+    "rarity": 1.0,
+    "count": { "min": 1, "max": 1 },
+    "size": { "minW": 5, "maxW": 7, "minH": 4, "maxH": 6 },
+    "bias": { "adjacentTo": ["dining-room"], "zone": "edge" }
+  },
+  {
+    "id": "dining-room",
+    "label": "Dining Room",
+    "type": "common",
+    "rarity": 1.0,
+    "count": { "min": 1, "max": 1 },
+    "size": { "minW": 5, "maxW": 7, "minH": 5, "maxH": 7 },
+    "bias": { "adjacentTo": ["kitchen", "living-room"], "zone": "center" }
+  },
+  {
+    "id": "master-bedroom",
+    "label": "Master Bedroom",
+    "type": "bedroom",
+    "rarity": 1.0,
+    "count": { "min": 1, "max": 1 },
+    "size": { "minW": 6, "maxW": 9, "minH": 5, "maxH": 8 },
+    "bias": { "adjacentTo": ["bathroom"], "zone": "corner" }
+  },
+  {
+    "id": "bedroom",
+    "label": "Bedroom",
+    "type": "bedroom",
+    "rarity": 0.85,
+    "count": { "min": 2, "max": 4 },
+    "size": { "minW": 4, "maxW": 6, "minH": 4, "maxH": 6 },
+    "bias": { "adjacentTo": ["bathroom", "closet"], "zone": "edge" }
+  },
+  {
+    "id": "bathroom",
+    "label": "Bathroom",
+    "type": "bathroom",
+    "rarity": 0.8,
+    "count": { "min": 2, "max": 3 },
+    "size": { "minW": 3, "maxW": 4, "minH": 3, "maxH": 4 },
+    "bias": { "adjacentTo": ["bedroom", "master-bedroom"], "zone": "any" }
+  },
+  {
+    "id": "closet",
+    "label": "Closet",
+    "type": "utility",
+    "rarity": 0.5,
+    "count": { "min": 0, "max": 2 },
+    "size": { "minW": 3, "maxW": 3, "minH": 3, "maxH": 3 },
+    "bias": { "adjacentTo": ["bedroom", "master-bedroom"], "zone": "any" }
+  },
+  {
+    "id": "garage",
+    "label": "Garage",
+    "type": "utility",
+    "rarity": 0.55,
+    "count": { "min": 0, "max": 1 },
+    "size": { "minW": 6, "maxW": 8, "minH": 5, "maxH": 7 },
+    "bias": { "adjacentTo": [], "zone": "edge" }
+  },
+  {
+    "id": "attic",
+    "label": "Attic",
+    "type": "special",
+    "rarity": 0.25,
+    "count": { "min": 0, "max": 1 },
+    "size": { "minW": 4, "maxW": 6, "minH": 4, "maxH": 6 },
+    "bias": { "adjacentTo": [], "zone": "any" }
+  },
+  {
+    "id": "basement-stairwell",
+    "label": "Basement Stairwell",
+    "type": "special",
+    "rarity": 0.3,
+    "count": { "min": 0, "max": 1 },
+    "size": { "minW": 3, "maxW": 4, "minH": 3, "maxH": 4 },
+    "bias": { "adjacentTo": [], "zone": "any" }
+  },
+  {
+    "id": "study",
+    "label": "Study",
+    "type": "common",
+    "rarity": 0.5,
+    "count": { "min": 0, "max": 1 },
+    "size": { "minW": 4, "maxW": 6, "minH": 4, "maxH": 5 },
+    "bias": { "adjacentTo": ["living-room"], "zone": "any" }
+  },
+  {
+    "id": "laundry-room",
+    "label": "Laundry Room",
+    "type": "utility",
+    "rarity": 0.45,
+    "count": { "min": 0, "max": 1 },
+    "size": { "minW": 3, "maxW": 4, "minH": 3, "maxH": 4 },
+    "bias": { "adjacentTo": ["kitchen"], "zone": "edge" }
+  }
+]

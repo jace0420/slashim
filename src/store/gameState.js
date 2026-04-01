@@ -31,12 +31,16 @@ export const state = {
   id: nanoid(),
   meta: createDefaultMeta(),
   cast: [],
+  map: null,
+  mapSeed: null,
 }
 
 export function resetGameState() {
   state.id = nanoid()
   state.meta = createDefaultMeta()
   state.cast = []
+  state.map = null
+  state.mapSeed = null
   return state
 }
 

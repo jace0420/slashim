@@ -2,6 +2,7 @@ import { showScreen } from '../router'
 import { saveGame } from '../store/db'
 import { createDefaultCharacter, patchGameState, state } from '../store/gameState'
 import { applyTextures } from '../ui/textures'
+import namePool from '../data/names.json'
 
 const ARCHETYPE_MODIFIERS = {
   'the-nerd':       { str: -1, cha: -1, int: 3 },
@@ -24,6 +25,73 @@ const PERSONALITY_TRAITS = ['openness', 'neuroticism', 'conscientiousness', 'agr
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
+}
+
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
+function randomAge() {
+  // 70% chance of 18–30, 30% chance of 31–100
+  return Math.random() < 0.7
+    ? Math.floor(Math.random() * 13) + 18
+    : Math.floor(Math.random() * 70) + 31
+}
+
+function randomizeChar(index) {
+  const sex = Math.random() < 0.5 ? 'male' : 'female'
+  const firstName = pick(namePool.first[sex])
+  const lastName = pick(namePool.last)
+  const archetype = pick(ARCHETYPES).value
+  const personality = {}
+  for (const trait of PERSONALITY_TRAITS) {
+    personality[trait] = Math.floor(Math.random() * 5) + 1
+  }
+  const attributes = {}
+  for (const stat of STATS) {
+    attributes[stat] = Math.floor(Math.random() * 20) + 1
+  }
+  state.cast[index] = {
+    name: `${firstName} ${lastName}`,
+    sex,
+    age: randomAge(),
+    archetype,
+    personality,
+    attributes,
+  }
+}
+
+function syncCardToState(cardEl, index) {
+  const char = state.cast[index]
+
+  const nameInput = cardEl.querySelector('[data-card-field="name"]')
+  if (nameInput) nameInput.value = char.name
+
+  const sexButtons = [...cardEl.querySelectorAll('[data-card-option="sex"]')]
+  sexButtons.forEach((btn) => {
+    const active = btn.dataset.value === char.sex
+    btn.classList.toggle('is-active', active)
+    btn.setAttribute('aria-pressed', String(active))
+  })
+
+  const ageValue = cardEl.querySelector('[data-card-stepper-value="age"]')
+  if (ageValue) ageValue.textContent = String(char.age)
+
+  const archetypeSelect = cardEl.querySelector('[data-card-select="archetype"]')
+  if (archetypeSelect) archetypeSelect.value = char.archetype
+
+  for (const trait of PERSONALITY_TRAITS) {
+    const slider = cardEl.querySelector(`[data-card-personality="${trait}"]`)
+    const display = cardEl.querySelector(`[data-card-personality-value="${trait}"]`)
+    if (slider) slider.value = String(char.personality[trait])
+    if (display) display.textContent = String(char.personality[trait])
+  }
+
+  for (const stat of STATS) {
+    const slider = cardEl.querySelector(`[data-card-attribute="${stat}"]`)
+    if (slider) slider.value = String(char.attributes[stat])
+    renderAttrDisplay(cardEl, index, stat)
+  }
 }
 
 function setFeedback(app, message, tone = 'success') {
@@ -293,6 +361,10 @@ export function mountSetupCast(app) {
             ${cardHTML}
           </div>
 
+          <div class="cast-form-actions">
+            <button class="menu-button" id="setup-cast-randomize-all" type="button" data-tex-backdrop data-tex-hover>RANDOMIZE ALL</button>
+          </div>
+
           <p class="setup-feedback" id="setup-cast-feedback" aria-live="polite"></p>
 
           <button class="menu-button setup-next" id="setup-cast-next" type="submit" data-tex-backdrop data-tex-hover>NEXT</button>
@@ -315,6 +387,16 @@ export function mountSetupCast(app) {
     event.preventDefault()
     if (!submitButton) return
     await handleNext(app, submitButton)
+  })
+
+  const randomizeAllBtn = app.querySelector('#setup-cast-randomize-all')
+  randomizeAllBtn?.addEventListener('click', () => {
+    const cardEls = [...app.querySelectorAll('[data-card-index]')]
+    cardEls.forEach((cardEl) => {
+      const index = Number(cardEl.dataset.cardIndex)
+      randomizeChar(index)
+      syncCardToState(cardEl, index)
+    })
   })
 
   const cards = [...app.querySelectorAll('[data-card-index]')]

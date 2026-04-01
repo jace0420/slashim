@@ -1,0 +1,19 @@
+{
+  "id": "manor",
+  "label": "Manor",
+  "mapSize": { "width": 24, "height": 24 },
+  "roomsFile": "manor.rooms.json",
+  "maxRooms": 14,
+  "minRooms": 8,
+  "hallwayWidth": 1,
+  "wallChar": "#",
+  "floorChar": ".",
+  "doorChar": "+",
+  "hallwayFloorChar": ".",
+  "voidChar": " ",
+  "zones": {
+    "center": { "x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5 },
+    "edge": "auto",
+    "corner": "auto"
+  }
+}
