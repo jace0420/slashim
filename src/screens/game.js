@@ -14,6 +14,7 @@ import { generateMap, debugPrintMap } from '../generation/mapGenerator'
 import { state } from '../store/gameState'
 import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFAULT_CLOCK_PARAMS } from '../simulation/clock'
 import { initCharacters, renderCharacters, tickCharacters, minuteTickCharacters } from '../simulation/characters'
+import socialTopics from '../data/social/topics.json'
 
 function shouldShowTweakPane() {
   return new URLSearchParams(window.location.search).get('tweak') === '1'
@@ -67,6 +68,7 @@ export function mountGame(container) {
   let clockWidget = null
   let simControls = null
   let simRng = null
+  let minuteCount = 0
 
   const clockParams = { ...DEFAULT_CLOCK_PARAMS }
   const hudParams = { ...DEFAULT_HUD_PARAMS }
@@ -335,7 +337,11 @@ export function mountGame(container) {
         if (events.length > 0) panels.cast.refresh(buildCastEntries())
       },
       onMinute: (clock) => {
-        minuteTickCharacters(state.characters)
+        minuteCount++
+        const socialEvents = minuteTickCharacters(state.characters, state.cast, socialTopics, minuteCount, simRng)
+        for (const evt of socialEvents) {
+          if (evt.type === 'social-talk') panels.narrative.appendEntry(evt.text)
+        }
         panels.cast.refresh(buildCastEntries())
         clockWidget?.update(clock)
       },
