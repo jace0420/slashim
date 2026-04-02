@@ -9,7 +9,7 @@ const ENTRY_GAP   = 4
 const TEXT_STYLE = {
   fontFamily: 'NothingYouCouldDo',
   fontSize: 11,
-  fill: 0x000000,
+  fill: 0xbbccdd,
 }
 
 // shared base — scrollable panel with a title row, clipped viewport, and a visible scrollbar thumb
@@ -157,7 +157,20 @@ export function buildCastPanel(p, castEntries = []) {
         })
         subLine.y = y
         base.contentContainer.addChild(subLine)
-        y += ROW_GAP + 4 // extra gap between entries in two-line mode
+        y += ROW_GAP
+
+        if (entry.health != null) {
+          // health · mood status line
+          const statusLine = new Text({
+            text: `${entry.health}  ·  ${entry.mood}`,
+            style: { fontFamily: 'monospace', fontSize: 9, fill: 0x556677 },
+          })
+          statusLine.y = y
+          base.contentContainer.addChild(statusLine)
+          y += ROW_GAP + 4 // bottom gap after 3-line block
+        } else {
+          y += 4 // original gap for two-line mode (no health data yet)
+        }
       } else {
         // fallback — original single-line format used before characters spawn
         const row = new Text({

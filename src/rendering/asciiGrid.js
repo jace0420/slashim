@@ -55,37 +55,26 @@ const DEFAULT_GLYPHS = [
   '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
 ]
 
-// creates the ascii grid renderer. call renderFullMap() to populate it from a MapData
-export function createAsciiGrid(panelParams, mapW, mapH) {
-  const glyphTextures = buildGlyphAtlas(DEFAULT_GLYPHS)
+// creates the ascii grid renderer. call renderFullMap() to populate it from a MapData.
+// cellPx controls the base pixel size per tile (zoom is handled externally by the viewport).
+export function createAsciiGrid(mapW, mapH, cellPx = 16) {
+  const glyphTextures = buildGlyphAtlas(DEFAULT_GLYPHS, cellPx)
 
   const container = new Container()
   const sprites = [] // flat array, index = y * mapW + x
 
-  // spacing so the grid fills the content area below the title row
-  const titleH = 20
-  const pad = 4
-  const availW = panelParams.w - pad * 2
-  const availH = panelParams.h - titleH - pad
-  const cellW = availW / mapW
-  const cellH = availH / mapH
-  const cellSize = Math.min(cellW, cellH)
+  const gridW = cellPx * mapW
+  const gridH = cellPx * mapH
 
-  // offset to center the grid in the available space
-  const gridW = cellSize * mapW
-  const gridH = cellSize * mapH
-  const offsetX = pad + (availW - gridW) / 2
-  const offsetY = titleH + (availH - gridH) / 2
-
-  // create one sprite per tile
+  // create one sprite per tile — no offset, grid starts at (0,0) of container
   const blankTex = glyphTextures.get(' ') || Texture.EMPTY
   for (let y = 0; y < mapH; y++) {
     for (let x = 0; x < mapW; x++) {
       const sprite = new Sprite(blankTex)
-      sprite.width = cellSize
-      sprite.height = cellSize
-      sprite.x = offsetX + x * cellSize
-      sprite.y = offsetY + y * cellSize
+      sprite.width = cellPx
+      sprite.height = cellPx
+      sprite.x = x * cellPx
+      sprite.y = y * cellPx
       container.addChild(sprite)
       sprites.push(sprite)
     }
@@ -121,5 +110,7 @@ export function createAsciiGrid(panelParams, mapW, mapH) {
     updateTile,
     renderFullMap,
     destroy,
+    gridW,
+    gridH,
   }
 }

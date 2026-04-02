@@ -1,30 +1,25 @@
-import { Assets, Container, Graphics, Sprite, Text } from 'pixi.js'
+import { Assets, Container, Graphics, Text } from 'pixi.js'
 import { Pane } from 'tweakpane'
 import Chance from 'chance'
 
 import { showScreen } from '../router'
 import { createPixiApp } from '../rendering/createPixiApp'
-import { createLightingFilter, DEFAULT_LIGHT_PARAMS, createFlicker, DEFAULT_FLICKER_PARAMS } from '../rendering/lighting'
 import { createAsciiGrid } from '../rendering/asciiGrid'
 import { buildCastPanel, buildNarrativePanel } from '../ui/panels'
 import { buildClockWidget } from '../ui/clockWidget'
+import { computeLayout, DEFAULT_HUD_PARAMS } from '../ui/hudLayout'
+import { createMapViewport } from '../ui/mapViewport'
+import { createTabStrip } from '../ui/tabStrip'
 import { generateMap, debugPrintMap } from '../generation/mapGenerator'
 import { state } from '../store/gameState'
 import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFAULT_CLOCK_PARAMS } from '../simulation/clock'
-import { initCharacters, renderCharacters, tickCharacters } from '../simulation/characters'
+import { initCharacters, renderCharacters, tickCharacters, minuteTickCharacters } from '../simulation/characters'
 
-const DIFFUSE_URL = '/assets/ui/game-screen-diffuse.png'
-
-const DEFAULT_PANEL_PARAMS = {
-  narrative: { x: 668,   y: 329, w: 192, h: 312 },
-  cast:      { x: 445, y: 329,  w: 192, h: 312 },
-  location:  { x: 883,  y: 329,  w: 192, h: 312 },
-  areaMap:   { x: 1113, y: 141, w: 312, h: 312 },
-  clockHud:  { x: 652,  y: 215, radius: 58 },
+function shouldShowTweakPane() {
+  return new URLSearchParams(window.location.search).get('tweak') === '1'
 }
 
 // lightweight placeholder panel — Graphics rect + label text
-// p is the live params object so redraw() always reads current values
 function buildPanel(label, p) {
   const container = new Container()
   const bg = new Graphics()
@@ -50,99 +45,87 @@ function buildPanel(label, p) {
   return { container, redraw }
 }
 
-function shouldShowTweakPane() {
-  return new URLSearchParams(window.location.search).get('tweak') === '1'
-}
-
-// scales and positions a sprite to cover the renderer dimensions (like CSS background-size: cover)
-function coverSprite(sprite, width, height) {
-  const texW = sprite.texture.width
-  const texH = sprite.texture.height
-  const scale = Math.max(width / texW, height / texH)
-
-  sprite.width = texW * scale
-  sprite.height = texH * scale
-  sprite.x = (width - sprite.width) / 2
-  sprite.y = (height - sprite.height) / 2
-}
-
 export function mountGame(container) {
-  // wrapper fills the viewport — PixiJS canvas lives inside it
   const wrapper = document.createElement('div')
-  wrapper.style.cssText = 'position:fixed;inset:0;overflow:hidden;background:#000;'
+  wrapper.style.cssText = 'position:fixed;inset:0;overflow:hidden;background:#0a0a12;'
   container.appendChild(wrapper)
 
   let pixiApp = null
   let pane = null
-  let uiPane = null
   let mapPane = null
   let simPane = null
-  let lighting = null
-  let flicker = null
-  let backdrop = null
+  let needsPane = null
+  let uiPane = null
   let sceneContainer = null
   let panels = {}
   let asciiGrid = null
-  let followCursor = false
-  let mouseMoveHandler = null
+  let mapVP = null        // mapViewport instance
+  let tabStrip = null
   let wheelHandler = null
   let cleanedUp = false
-  let clockHandle = null   // { play, pause, setSpeed, stop, isPaused } from createClock
-  let clockWidget = null   // analog clock HUD (buildClockWidget)
-  let simControls = null   // play/pause + speed buttons container
-  let simRng = null        // Chance instance for simulation randomness
+  let clockHandle = null
+  let clockWidget = null
+  let simControls = null
+  let simRng = null
 
-  // flicker params live on this object so tweakpane bindings mutate it in-place
-  const flickerParams = { ...DEFAULT_FLICKER_PARAMS }
-
-  // simulation tuning — mutable so tweakpane can adjust live
   const clockParams = { ...DEFAULT_CLOCK_PARAMS }
+  const hudParams = { ...DEFAULT_HUD_PARAMS }
 
-  // track current tweakpane params in a local object so bindings can mutate it
-  const params = {
-    panels: {
-      narrative: { ...DEFAULT_PANEL_PARAMS.narrative },
-      cast:      { ...DEFAULT_PANEL_PARAMS.cast },
-      location:  { ...DEFAULT_PANEL_PARAMS.location },
-      areaMap:   { ...DEFAULT_PANEL_PARAMS.areaMap },
-      clockHud:  { ...DEFAULT_PANEL_PARAMS.clockHud },
-    },
-    light: {
-      x: DEFAULT_LIGHT_PARAMS.lightPos.x,
-      y: DEFAULT_LIGHT_PARAMS.lightPos.y,
-      color: { r: Math.round(DEFAULT_LIGHT_PARAMS.lightColor.r * 255), g: Math.round(DEFAULT_LIGHT_PARAMS.lightColor.g * 255), b: Math.round(DEFAULT_LIGHT_PARAMS.lightColor.b * 255) },
-      intensity: DEFAULT_LIGHT_PARAMS.lightIntensity,
-      radius: DEFAULT_LIGHT_PARAMS.lightRadius,
-      falloff: DEFAULT_LIGHT_PARAMS.lightFalloff,
-    },
-    ambient: {
-      color: { r: Math.round(DEFAULT_LIGHT_PARAMS.ambientColor.r * 255), g: Math.round(DEFAULT_LIGHT_PARAMS.ambientColor.g * 255), b: Math.round(DEFAULT_LIGHT_PARAMS.ambientColor.b * 255) },
-      intensity: DEFAULT_LIGHT_PARAMS.ambientIntensity,
-    },
-    followCursor: false,
+  // live panel param objects — layout zones write into these, panels read from them
+  const panelParams = {
+    narrative: { x: 0, y: 0, w: 280, h: 200 },
+    cast:      { x: 0, y: 0, w: 220, h: 600 },
+    clockHud:  { x: 0, y: 0, radius: 28 },
   }
 
-  function syncUniforms() {
-    if (!lighting) return
-    lighting.setLightPos(params.light.x, params.light.y)
-    lighting.setLightColor({ r: params.light.color.r / 255, g: params.light.color.g / 255, b: params.light.color.b / 255 })
-    lighting.uniforms.uLightIntensity = params.light.intensity
-    lighting.uniforms.uLightRadius = params.light.radius
-    lighting.uniforms.uLightFalloff = params.light.falloff
-    lighting.setAmbientColor({ r: params.ambient.color.r / 255, g: params.ambient.color.g / 255, b: params.ambient.color.b / 255 })
-    lighting.uniforms.uAmbientIntensity = params.ambient.intensity
+  // computes layout from current viewport size and applies it to all panel params
+  function applyLayout() {
+    const vw = pixiApp.renderer.width
+    const vh = pixiApp.renderer.height
+    const layout = computeLayout(vw, vh, hudParams)
+
+    // narrative — bottom-left
+    Object.assign(panelParams.narrative, {
+      x: layout.narrative.x,
+      y: layout.narrative.y,
+      w: layout.narrative.w,
+      h: layout.narrative.h,
+    })
+
+    // cast — right sidebar
+    Object.assign(panelParams.cast, {
+      x: layout.rightSidebar.x,
+      y: layout.rightSidebar.y,
+      w: layout.rightSidebar.w,
+      h: layout.rightSidebar.h,
+    })
+
+    // clock — inside the top-left HUD zone
+    Object.assign(panelParams.clockHud, {
+      x: layout.topLeftHud.x + 28 + 4,
+      y: layout.topLeftHud.y + 30,
+      radius: 28,
+    })
+
+    // resize map viewport
+    mapVP?.resize(layout.mapViewport)
+
+    // resize tab strip
+    tabStrip?.resize(layout.tabStrip)
+
+    // redraw all panels
+    panels.narrative?.redraw()
+    panels.cast?.redraw()
+    clockWidget?.redraw()
+
+    // reposition sim controls next to the clock
+    if (simControls) {
+      simControls.container.x = layout.topLeftHud.x + 28 * 2 + 16
+      simControls.container.y = layout.topLeftHud.y + 17
+    }
   }
 
-  function onMouseMove(e) {
-    if (!followCursor || !pixiApp) return
-    params.light.x = e.clientX / pixiApp.renderer.width
-    params.light.y = e.clientY / pixiApp.renderer.height
-    lighting?.setLightPos(params.light.x, params.light.y)
-    // refresh tweakpane display if open
-    pane?.refresh()
-  }
-
-  // builds merged cast entries combining setup data with live sim state (color + current room)
+  // builds merged cast entries combining setup data with live sim state
   function buildCastEntries() {
     return state.cast.map((castEntry, i) => {
       const char = state.characters.find(c => c.castIndex === i)
@@ -155,22 +138,23 @@ export function mountGame(container) {
         archetype: castEntry.archetype,
         color: char?.color ?? null,
         room,
+        health: char?.health ?? null,
+        mood:   char?.mood   ?? null,
       }
     })
   }
 
-  // builds the sim controls row: a play/pause toggle + NORMAL / FAST / FASTEST speed buttons
+  // sim controls row: play/pause toggle + speed buttons
   function buildSimControls(x, y) {
     const ctr = new Container()
     ctr.x = x
     ctr.y = y
 
     const btnH = 26
-    const ppW = 50   // play/pause button
-    const spW = 56   // each speed button
+    const ppW = 50
+    const spW = 56
     const gap = 4
 
-    // generic button factory — returns { container, setText, setActive }
     function makeBtn(label, bx, bw, onClick) {
       const b = new Container()
       b.x = bx
@@ -241,7 +225,6 @@ export function mountGame(container) {
 
     return {
       container: ctr,
-      // externally force a pause (e.g. major events — TODO)
       forcePause() {
         if (!playing) return
         clockHandle?.pause()
@@ -257,60 +240,83 @@ export function mountGame(container) {
   async function init() {
     pixiApp = await createPixiApp(wrapper)
 
-    const texture = await Assets.load(DIFFUSE_URL)
-    backdrop = new Sprite(texture)
-
-    lighting = createLightingFilter(DEFAULT_LIGHT_PARAMS)
-    lighting.setAspectRatio(pixiApp.renderer.width / pixiApp.renderer.height)
-
-    // sceneContainer gets the filter so backdrop + all panels share the same lighting pass
-    sceneContainer = new Container()
-    sceneContainer.filters = [lighting.filter]
-
-    coverSprite(backdrop, pixiApp.renderer.width, pixiApp.renderer.height)
-    sceneContainer.addChild(backdrop)
-
-    // font must be loaded before any panel Text objects are created
     await Assets.load({ alias: 'NothingYouCouldDo', src: '/assets/fonts/NothingYouCouldDo-Regular.ttf' })
 
-    // cast + narrative use functional panels; location remains placeholder; areaMap hosts the generated map
-    panels.narrative = buildNarrativePanel(params.panels.narrative)
-    panels.cast      = buildCastPanel(params.panels.cast, state.cast)
-    panels.location  = buildPanel('LOCATION PANE',  params.panels.location)
-    panels.areaMap   = buildPanel('AREA MAP',        params.panels.areaMap)
+    sceneContainer = new Container()
 
-    for (const panel of Object.values(panels)) {
-      sceneContainer.addChild(panel.container)
-    }
+    // compute initial layout
+    const vw = pixiApp.renderer.width
+    const vh = pixiApp.renderer.height
+    const layout = computeLayout(vw, vh, hudParams)
 
-    // generate and render the procedural map into the area map panel
+    // --- map viewport (background layer, fills most of the screen) ---
+    mapVP = createMapViewport(layout.mapViewport)
+    sceneContainer.addChild(mapVP.viewport)
+
+    // generate the map
     const mapSeed = state.mapSeed || String(Date.now())
     state.mapSeed = mapSeed
     state.map = generateMap('manor', mapSeed)
     debugPrintMap(state.map)
 
-    asciiGrid = createAsciiGrid(params.panels.areaMap, state.map.width, state.map.height)
+    asciiGrid = createAsciiGrid(state.map.width, state.map.height, 16)
     asciiGrid.renderFullMap(state.map)
-    panels.areaMap.container.addChild(asciiGrid.container)
+    mapVP.content.addChild(asciiGrid.container)
+    mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
-    // spawn characters on the map
+    // spawn characters
     state.characters = initCharacters(state.cast, state.map, state.mapSeed)
     renderCharacters(state.characters, asciiGrid)
     simRng = new Chance(state.mapSeed + '-sim')
 
-    // refresh cast panel with colors + starting rooms now that characters exist
+    // --- HUD overlay layer (sits on top of the map) ---
+    const hudLayer = new Container()
+    sceneContainer.addChild(hudLayer)
+
+    // narrative panel — bottom-left
+    Object.assign(panelParams.narrative, {
+      x: layout.narrative.x,
+      y: layout.narrative.y,
+      w: layout.narrative.w,
+      h: layout.narrative.h,
+    })
+    panels.narrative = buildNarrativePanel(panelParams.narrative)
+    hudLayer.addChild(panels.narrative.container)
+
+    // cast panel — right sidebar
+    Object.assign(panelParams.cast, {
+      x: layout.rightSidebar.x,
+      y: layout.rightSidebar.y,
+      w: layout.rightSidebar.w,
+      h: layout.rightSidebar.h,
+    })
+    panels.cast = buildCastPanel(panelParams.cast, state.cast)
+    hudLayer.addChild(panels.cast.container)
+
+    // refresh cast with sim state
     panels.cast.refresh(buildCastEntries())
 
-    // initialize clock from setup meta
+    // clock widget — top-left
+    Object.assign(panelParams.clockHud, {
+      x: layout.topLeftHud.x + 28 + 4,
+      y: layout.topLeftHud.y + 30,
+      radius: 28,
+    })
     state.clock = initClock(state.meta)
     state.simulation = { running: false }
 
-    // analog clock HUD widget
-    clockWidget = buildClockWidget(params.panels.clockHud)
-    clockWidget.update(state.clock) // draw initial hand positions
-    sceneContainer.addChild(clockWidget.container)
+    clockWidget = buildClockWidget(panelParams.clockHud)
+    clockWidget.update(state.clock)
+    hudLayer.addChild(clockWidget.container)
 
-    // create the realtime clock — starts paused, play/pause buttons control it
+    // sim controls next to the clock
+    simControls = buildSimControls(
+      layout.topLeftHud.x + 28 * 2 + 16,
+      layout.topLeftHud.y + 17,
+    )
+    hudLayer.addChild(simControls.container)
+
+    // clock handle — starts paused
     clockHandle = createClock(state.clock, clockParams, {
       onTick: (_tickIndex, _minuteAdvanced) => {
         const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
@@ -319,37 +325,38 @@ export function mountGame(container) {
             panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
           }
         }
-        // refresh the cast panel whenever someone moved rooms
         if (events.length > 0) panels.cast.refresh(buildCastEntries())
       },
       onMinute: (clock) => {
+        minuteTickCharacters(state.characters)
+        panels.cast.refresh(buildCastEntries())
         clockWidget?.update(clock)
       },
     })
 
-    // sim controls row: play/pause + speed buttons, positioned below the panels
-    simControls = buildSimControls(params.panels.cast.x, params.panels.cast.y + params.panels.cast.h + 12)
-    sceneContainer.addChild(simControls.container)
+    // --- bottom tab strip ---
+    tabStrip = createTabStrip(layout.tabStrip)
 
+    // location placeholder as the first tab
+    const locationContent = new Container()
+    const locText = new Text({
+      text: 'Location data will appear here.',
+      style: { fontSize: 11, fill: 0x778899, fontFamily: 'monospace' },
+    })
+    locationContent.addChild(locText)
+    tabStrip.addTab('locations', 'LOCATIONS', locationContent)
+
+    sceneContainer.addChild(tabStrip.container)
+
+    // --- add scene to stage ---
     pixiApp.stage.addChild(sceneContainer)
 
-    // update cover + aspect ratio whenever the renderer resizes
-    pixiApp.renderer.on('resize', (width, height) => {
-      if (backdrop) coverSprite(backdrop, width, height)
-      if (lighting) lighting.setAspectRatio(width / height)
+    // --- resize handler ---
+    pixiApp.renderer.on('resize', () => {
+      applyLayout()
     })
 
-    // flicker reads params.light each frame so tweakpane base changes propagate naturally
-    flicker = createFlicker(lighting, pixiApp.ticker, params.light, flickerParams)
-
-    mouseMoveHandler = onMouseMove
-    window.addEventListener('mousemove', mouseMoveHandler)
-
-    // wheel scrolls whichever panel the cursor is over
-    const scrollablePanels = [
-      { ref: panels.cast,      p: params.panels.cast },
-      { ref: panels.narrative, p: params.panels.narrative },
-    ]
+    // --- wheel: zoom map or scroll panels ---
     wheelHandler = (e) => {
       if (!pixiApp) return
       const rect = pixiApp.canvas.getBoundingClientRect()
@@ -357,12 +364,25 @@ export function mountGame(container) {
       const sy = pixiApp.renderer.height / rect.height
       const cx = (e.clientX - rect.left) * sx
       const cy = (e.clientY - rect.top) * sy
+
+      // check if cursor is over a scrollable panel first
+      const scrollablePanels = [
+        { ref: panels.cast,      p: panelParams.cast },
+        { ref: panels.narrative, p: panelParams.narrative },
+      ]
       for (const { ref, p } of scrollablePanels) {
         if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) {
           ref.scroll(e.deltaY * 0.5)
           e.preventDefault()
-          break
+          return
         }
+      }
+
+      // otherwise zoom the map
+      const mb = mapVP.bounds
+      if (cx >= mb.x && cx <= mb.x + mb.w && cy >= mb.y && cy <= mb.y + mb.h) {
+        mapVP.zoomAt(cx - mb.x, cy - mb.y, e.deltaY)
+        e.preventDefault()
       }
     }
     pixiApp.canvas.addEventListener('wheel', wheelHandler, { passive: false })
@@ -373,56 +393,13 @@ export function mountGame(container) {
   }
 
   function setupTweakPane() {
-    pane = new Pane({ title: 'Game Lighting' })
-
-    const lightFolder = pane.addFolder({ title: 'Point Light', expanded: true })
-    lightFolder.addBinding(params.light, 'x', { min: 0, max: 1, step: 0.001, label: 'pos x' }).on('change', syncUniforms)
-    lightFolder.addBinding(params.light, 'y', { min: 0, max: 1, step: 0.001, label: 'pos y' }).on('change', syncUniforms)
-    lightFolder.addBinding(params.light, 'color', { label: 'color' }).on('change', syncUniforms)
-    lightFolder.addBinding(params.light, 'intensity', { min: 0, max: 5, step: 0.01, label: 'intensity' }).on('change', syncUniforms)
-    lightFolder.addBinding(params.light, 'radius', { min: 0.01, max: 2, step: 0.01, label: 'radius' }).on('change', syncUniforms)
-    lightFolder.addBinding(params.light, 'falloff', { min: 0.1, max: 10, step: 0.1, label: 'falloff' }).on('change', syncUniforms)
-
-    const ambientFolder = pane.addFolder({ title: 'Ambient', expanded: true })
-    ambientFolder.addBinding(params.ambient, 'color', { label: 'color' }).on('change', syncUniforms)
-    ambientFolder.addBinding(params.ambient, 'intensity', { min: 0, max: 1, step: 0.01, label: 'intensity' }).on('change', syncUniforms)
-
-    pane.addBinding(params, 'followCursor', { label: 'follow cursor' }).on('change', ({ value }) => {
-      followCursor = value
-    })
-
-    const flickerFolder = pane.addFolder({ title: 'Flicker', expanded: true })
-    flickerFolder.addBinding(flickerParams, 'enabled', { label: 'enabled' })
-    flickerFolder.addBinding(flickerParams, 'intensityScale', { min: 0, max: 0.5, step: 0.01, label: 'intensity scale' })
-    flickerFolder.addBinding(flickerParams, 'radiusScale', { min: 0, max: 0.3, step: 0.01, label: 'radius scale' })
-    flickerFolder.addBinding(flickerParams, 'swayScale', { min: 0, max: 0.02, step: 0.001, label: 'sway scale' })
-    flickerFolder.addBinding(flickerParams, 'speed', { min: 0.1, max: 3, step: 0.05, label: 'speed' })
-
-    // separate pane for UI panel layout — resize and position each panel live
-    uiPane = new Pane({ title: 'Game UI' })
-
-    const panelDefs = [
-      { key: 'narrative', label: 'Narrative Pane' },
-      { key: 'cast',      label: 'Cast Pane'      },
-      { key: 'location',  label: 'Location Pane'  },
-      { key: 'areaMap',   label: 'Area Map'        },
-    ]
-
-    for (const { key, label } of panelDefs) {
-      const p = params.panels[key]
-      const panel = panels[key]
-      const folder = uiPane.addFolder({ title: label, expanded: false })
-      folder.addBinding(p, 'x', { min: 0, max: 2560, step: 1, label: 'x' }).on('change', () => panel.redraw())
-      folder.addBinding(p, 'y', { min: 0, max: 1440, step: 1, label: 'y' }).on('change', () => panel.redraw())
-      folder.addBinding(p, 'w', { min: 50, max: 1920, step: 1, label: 'w' }).on('change', () => panel.redraw())
-      folder.addBinding(p, 'h', { min: 50, max: 1080, step: 1, label: 'h' }).on('change', () => panel.redraw())
-    }
-
-    // clock HUD position + size
-    const clockHudFolder = uiPane.addFolder({ title: 'Clock HUD', expanded: false })
-    clockHudFolder.addBinding(params.panels.clockHud, 'x',      { min: 0, max: 2560, step: 1,  label: 'x'      }).on('change', () => clockWidget?.redraw())
-    clockHudFolder.addBinding(params.panels.clockHud, 'y',      { min: 0, max: 1440, step: 1,  label: 'y'      }).on('change', () => clockWidget?.redraw())
-    clockHudFolder.addBinding(params.panels.clockHud, 'radius', { min: 20, max: 200, step: 1,  label: 'radius' }).on('change', () => clockWidget?.redraw())
+    // HUD layout tuning
+    uiPane = new Pane({ title: 'HUD Layout' })
+    uiPane.addBinding(hudParams, 'sidebarW',   { min: 140, max: 400, step: 1, label: 'sidebar W'   }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'tabStripH',   { min: 60, max: 300, step: 1, label: 'tab strip H' }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'narrativeW',  { min: 150, max: 500, step: 1, label: 'narrative W' }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'narrativeH',  { min: 100, max: 400, step: 1, label: 'narrative H' }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'hudPad',      { min: 0, max: 32, step: 1,    label: 'padding'     }).on('change', applyLayout)
 
     // map generation debug controls
     mapPane = new Pane({ title: 'Map Generation' })
@@ -435,29 +412,39 @@ export function mountGame(container) {
       state.map = generateMap('manor', newSeed)
       debugPrintMap(state.map)
 
-      // rebuild the ascii grid with the new map
       if (asciiGrid) {
-        panels.areaMap.container.removeChild(asciiGrid.container)
+        mapVP.content.removeChild(asciiGrid.container)
         asciiGrid.destroy()
       }
-      asciiGrid = createAsciiGrid(params.panels.areaMap, state.map.width, state.map.height)
+      asciiGrid = createAsciiGrid(state.map.width, state.map.height, 16)
       asciiGrid.renderFullMap(state.map)
+      mapVP.content.addChild(asciiGrid.container)
+      mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
-      // re-spawn characters on the fresh map
       state.characters = initCharacters(state.cast, state.map, newSeed)
       renderCharacters(state.characters, asciiGrid)
       simRng = new Chance(newSeed + '-sim')
-
-      // refresh cast panel with new character positions + colors
       panels.cast.refresh(buildCastEntries())
 
-      panels.areaMap.container.addChild(asciiGrid.container)
       mapPane.refresh()
     })
     mapPane.addButton({ title: 'Random Seed' }).on('click', () => {
       mapParams.seed = String(Date.now())
       mapPane.refresh()
     })
+
+    // character needs monitor
+    needsPane = new Pane({ title: 'Character Needs' })
+    for (const c of state.characters) {
+      const folder = needsPane.addFolder({ title: c.name, expanded: false })
+      const statKeys = ['energy', 'stamina', 'hunger', 'thirst', 'social', 'sanity', 'boredom', 'fear', 'adrenaline']
+      for (const key of statKeys) {
+        folder.addBinding(c.needs, key, { readonly: true, min: 0, max: 100, label: key })
+      }
+      folder.addBinding(c, 'health', { readonly: true, label: 'health' })
+      folder.addBinding(c, 'mood',   { readonly: true, label: 'mood'   })
+    }
+    pixiApp.ticker.add(() => needsPane.refresh())
 
     // simulation debug controls
     simPane = new Pane({ title: 'Simulation' })
@@ -467,7 +454,6 @@ export function mountGame(container) {
     const simClockDisplay = { time: formatClock(state.clock) }
     simPane.addBinding(simClockDisplay, 'time', { label: 'clock', readonly: true })
 
-    // manual step buttons — only useful while paused
     simPane.addButton({ title: 'Advance 1 Tick' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
       const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
@@ -490,13 +476,14 @@ export function mountGame(container) {
         if (events.length > 0) panels.cast.refresh(buildCastEntries())
       }
       advanceMinute(state.clock)
+      minuteTickCharacters(state.characters)
+      panels.cast.refresh(buildCastEntries())
       clockWidget?.update(state.clock)
       simClockDisplay.time = formatClock(state.clock)
       simPane.refresh()
     })
   }
 
-  // kick off async init — any errors surface in the console
   init().catch((error) => {
     console.error('[game] init failed:', error)
   })
@@ -505,23 +492,21 @@ export function mountGame(container) {
     if (cleanedUp) return
     cleanedUp = true
 
-    // stop any running simulation batch
     clockHandle?.stop()
     clockHandle = null
 
-    if (mouseMoveHandler) {
-      window.removeEventListener('mousemove', mouseMoveHandler)
-    }
     if (wheelHandler && pixiApp) {
       pixiApp.canvas.removeEventListener('wheel', wheelHandler)
     }
 
-    flicker?.stop()
     asciiGrid?.destroy()
+    mapVP?.destroy()
+    tabStrip?.destroy()
     pane?.dispose()
     uiPane?.dispose()
     mapPane?.dispose()
     simPane?.dispose()
+    needsPane?.dispose()
 
     if (pixiApp) {
       pixiApp.destroy(true, { children: true, texture: false })
