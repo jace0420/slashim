@@ -1,5 +1,5 @@
 import Chance from 'chance'
-import { Tile, TILE_DISPLAY, createGrid, inBounds } from './tileTypes.js'
+import { Tile, TILE_DISPLAY, createGrid, inBounds, isWalkable } from './tileTypes.js'
 import { tryPlaceRoom } from './roomPlacer.js'
 import { connectRooms } from './hallways.js'
 
@@ -11,10 +11,6 @@ const ROOM_DEFS = { manor: manorRooms }
 
 // cardinal neighbor offsets
 const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]]
-
-function isWalkable(tile) {
-  return tile === Tile.FLOOR || tile === Tile.HALLWAY || tile === Tile.DOOR
-}
 
 // build the room placement queue — roll rarity, expand counts, sort by priority
 function buildPlacementQueue(roomDefs, rng) {

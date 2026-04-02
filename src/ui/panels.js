@@ -125,22 +125,51 @@ function buildScrollablePanel(label, p) {
   }
 }
 
-// lists cast character names + archetypes; call refresh(entries) to repopulate
+// lists cast members. entries can have optional { color, room } for live sim state:
+//   color — hex color matching their '@' on the map; renders "@  name" in that color
+//   room  — current room label shown as a subtitle under the name
+// falls back to the original "name · archetype" single-line format if color is absent.
 export function buildCastPanel(p, castEntries = []) {
   const base = buildScrollablePanel('CAST', p)
 
   function populate(entries) {
     base.contentContainer.removeChildren()
     let y = 0
+
     for (const entry of entries) {
-      const row = new Text({
-        text: `${entry.name}  ·  ${entry.archetype}`,
-        style: { ...TEXT_STYLE },
-      })
-      row.y = y
-      base.contentContainer.addChild(row)
-      y += ROW_GAP
+      if (entry.color != null) {
+        // colored @ + name in character's palette color (monospace so @ matches the map glyph)
+        const nameLine = new Text({
+          text: `@ ${entry.name}`,
+          style: { fontFamily: 'monospace', fontSize: 11, fill: entry.color },
+        })
+        nameLine.y = y
+        base.contentContainer.addChild(nameLine)
+        y += ROW_GAP
+
+        // archetype · room subtitle
+        const subtitle = entry.room
+          ? `${entry.archetype}  ·  ${entry.room}`
+          : entry.archetype
+        const subLine = new Text({
+          text: subtitle,
+          style: { fontFamily: 'NothingYouCouldDo', fontSize: 9, fill: 0x778899 },
+        })
+        subLine.y = y
+        base.contentContainer.addChild(subLine)
+        y += ROW_GAP + 4 // extra gap between entries in two-line mode
+      } else {
+        // fallback — original single-line format used before characters spawn
+        const row = new Text({
+          text: `${entry.name}  ·  ${entry.archetype}`,
+          style: { ...TEXT_STYLE },
+        })
+        row.y = y
+        base.contentContainer.addChild(row)
+        y += ROW_GAP
+      }
     }
+
     base.setTotalContentH(y)
     base.redraw()
   }

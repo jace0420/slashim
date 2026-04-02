@@ -1,7 +1,7 @@
 {
   "id": "manor",
   "label": "Manor",
-  "mapSize": { "width": 24, "height": 24 },
+  "mapSize": { "width": 48, "height": 48 },
   "roomsFile": "manor.rooms.json",
   "maxRooms": 14,
   "minRooms": 8,

@@ -30,3 +30,8 @@ export function createGrid(w, h, fill = Tile.VOID) {
 export function inBounds(grid, x, y) {
   return y >= 0 && y < grid.length && x >= 0 && x < grid[0].length
 }
+
+// true for any tile a character can stand on / walk through
+export function isWalkable(tile) {
+  return tile === Tile.FLOOR || tile === Tile.HALLWAY || tile === Tile.DOOR
+}

@@ -33,6 +33,10 @@ export const state = {
   cast: [],
   map: null,
   mapSeed: null,
+  // runtime sim state — initialized when the game screen mounts
+  clock: null,       // { hour, minute, meridiem } — set from meta on game start
+  characters: [],    // runtime character entries with position, color, etc.
+  simulation: null,  // { running } — tracks whether the clock loop is active
 }
 
 export function resetGameState() {
@@ -41,6 +45,9 @@ export function resetGameState() {
   state.cast = []
   state.map = null
   state.mapSeed = null
+  state.clock = null
+  state.characters = []
+  state.simulation = null
   return state
 }
 

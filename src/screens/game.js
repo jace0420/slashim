@@ -1,13 +1,17 @@
 import { Assets, Container, Graphics, Sprite, Text } from 'pixi.js'
 import { Pane } from 'tweakpane'
+import Chance from 'chance'
 
 import { showScreen } from '../router'
 import { createPixiApp } from '../rendering/createPixiApp'
 import { createLightingFilter, DEFAULT_LIGHT_PARAMS, createFlicker, DEFAULT_FLICKER_PARAMS } from '../rendering/lighting'
 import { createAsciiGrid } from '../rendering/asciiGrid'
 import { buildCastPanel, buildNarrativePanel } from '../ui/panels'
+import { buildClockWidget } from '../ui/clockWidget'
 import { generateMap, debugPrintMap } from '../generation/mapGenerator'
 import { state } from '../store/gameState'
+import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFAULT_CLOCK_PARAMS } from '../simulation/clock'
+import { initCharacters, renderCharacters, tickCharacters } from '../simulation/characters'
 
 const DIFFUSE_URL = '/assets/ui/game-screen-diffuse.png'
 
@@ -16,6 +20,7 @@ const DEFAULT_PANEL_PARAMS = {
   cast:      { x: 445, y: 329,  w: 192, h: 312 },
   location:  { x: 883,  y: 329,  w: 192, h: 312 },
   areaMap:   { x: 1113, y: 141, w: 312, h: 312 },
+  clockHud:  { x: 652,  y: 215, radius: 58 },
 }
 
 // lightweight placeholder panel — Graphics rect + label text
@@ -70,6 +75,8 @@ export function mountGame(container) {
   let pixiApp = null
   let pane = null
   let uiPane = null
+  let mapPane = null
+  let simPane = null
   let lighting = null
   let flicker = null
   let backdrop = null
@@ -80,9 +87,16 @@ export function mountGame(container) {
   let mouseMoveHandler = null
   let wheelHandler = null
   let cleanedUp = false
+  let clockHandle = null   // { play, pause, setSpeed, stop, isPaused } from createClock
+  let clockWidget = null   // analog clock HUD (buildClockWidget)
+  let simControls = null   // play/pause + speed buttons container
+  let simRng = null        // Chance instance for simulation randomness
 
   // flicker params live on this object so tweakpane bindings mutate it in-place
   const flickerParams = { ...DEFAULT_FLICKER_PARAMS }
+
+  // simulation tuning — mutable so tweakpane can adjust live
+  const clockParams = { ...DEFAULT_CLOCK_PARAMS }
 
   // track current tweakpane params in a local object so bindings can mutate it
   const params = {
@@ -91,6 +105,7 @@ export function mountGame(container) {
       cast:      { ...DEFAULT_PANEL_PARAMS.cast },
       location:  { ...DEFAULT_PANEL_PARAMS.location },
       areaMap:   { ...DEFAULT_PANEL_PARAMS.areaMap },
+      clockHud:  { ...DEFAULT_PANEL_PARAMS.clockHud },
     },
     light: {
       x: DEFAULT_LIGHT_PARAMS.lightPos.x,
@@ -125,6 +140,118 @@ export function mountGame(container) {
     lighting?.setLightPos(params.light.x, params.light.y)
     // refresh tweakpane display if open
     pane?.refresh()
+  }
+
+  // builds merged cast entries combining setup data with live sim state (color + current room)
+  function buildCastEntries() {
+    return state.cast.map((castEntry, i) => {
+      const char = state.characters.find(c => c.castIndex === i)
+      let room = null
+      if (char && char.roomIndex >= 0) {
+        room = state.map?.rooms[char.roomIndex]?.def?.label ?? null
+      }
+      return {
+        name: castEntry.name,
+        archetype: castEntry.archetype,
+        color: char?.color ?? null,
+        room,
+      }
+    })
+  }
+
+  // builds the sim controls row: a play/pause toggle + NORMAL / FAST / FASTEST speed buttons
+  function buildSimControls(x, y) {
+    const ctr = new Container()
+    ctr.x = x
+    ctr.y = y
+
+    const btnH = 26
+    const ppW = 50   // play/pause button
+    const spW = 56   // each speed button
+    const gap = 4
+
+    // generic button factory — returns { container, setText, setActive }
+    function makeBtn(label, bx, bw, onClick) {
+      const b = new Container()
+      b.x = bx
+      b.eventMode = 'static'
+      b.cursor = 'pointer'
+
+      const bg = new Graphics()
+      b.addChild(bg)
+
+      const txt = new Text({
+        text: label,
+        style: { fontSize: 10, fill: 0xcccccc, fontFamily: 'monospace', letterSpacing: 1 },
+      })
+      b.addChild(txt)
+
+      function draw(active) {
+        bg.clear()
+        bg.rect(0, 0, bw, btnH)
+          .fill({ color: active ? 0x334455 : 0x1a1a2e, alpha: 0.85 })
+          .stroke({ color: active ? 0xaabbcc : 0x556677, alpha: 0.7, width: 1 })
+        txt.x = Math.floor((bw - txt.width) / 2)
+        txt.y = Math.floor((btnH - txt.height) / 2)
+      }
+
+      draw(false)
+      b.on('pointerdown', onClick)
+
+      return {
+        container: b,
+        setActive(val) { draw(val) },
+        setText(s) { txt.text = s; draw(false) },
+      }
+    }
+
+    let playing = false
+    let activeSpeed = 'normal'
+
+    const playBtn = makeBtn('▶ PLAY', 0, ppW, () => {
+      if (!clockHandle) return
+      if (playing) {
+        clockHandle.pause()
+        playing = false
+        state.simulation.running = false
+      } else {
+        clockHandle.play()
+        playing = true
+        state.simulation.running = true
+      }
+      playBtn.setActive(playing)
+      playBtn.setText(playing ? '⏸ PAUSE' : '▶ PLAY')
+    })
+    ctr.addChild(playBtn.container)
+
+    const speeds = Object.entries(SPEED_PRESETS)
+    const speedBtns = {}
+    speeds.forEach(([key, preset], i) => {
+      const bx = ppW + gap + i * (spW + gap)
+      const btn = makeBtn(preset.label, bx, spW, () => {
+        activeSpeed = key
+        clockHandle?.setSpeed(preset.tickIntervalMs)
+        clockParams.tickIntervalMs = preset.tickIntervalMs
+        for (const [k, b] of Object.entries(speedBtns)) b.setActive(k === key)
+      })
+      speedBtns[key] = btn
+      ctr.addChild(btn.container)
+    })
+    speedBtns['normal'].setActive(true)
+
+    return {
+      container: ctr,
+      // externally force a pause (e.g. major events — TODO)
+      forcePause() {
+        if (!playing) return
+        clockHandle?.pause()
+        playing = false
+        state.simulation.running = false
+        playBtn.setActive(false)
+        playBtn.setText('▶ PLAY')
+      },
+      isPlaying: () => playing,
+    }
   }
 
   async function init() {
@@ -165,6 +292,44 @@ export function mountGame(container) {
     asciiGrid = createAsciiGrid(params.panels.areaMap, state.map.width, state.map.height)
     asciiGrid.renderFullMap(state.map)
     panels.areaMap.container.addChild(asciiGrid.container)
+
+    // spawn characters on the map
+    state.characters = initCharacters(state.cast, state.map, state.mapSeed)
+    renderCharacters(state.characters, asciiGrid)
+    simRng = new Chance(state.mapSeed + '-sim')
+
+    // refresh cast panel with colors + starting rooms now that characters exist
+    panels.cast.refresh(buildCastEntries())
+
+    // initialize clock from setup meta
+    state.clock = initClock(state.meta)
+    state.simulation = { running: false }
+
+    // analog clock HUD widget
+    clockWidget = buildClockWidget(params.panels.clockHud)
+    clockWidget.update(state.clock) // draw initial hand positions
+    sceneContainer.addChild(clockWidget.container)
+
+    // create the realtime clock — starts paused, play/pause buttons control it
+    clockHandle = createClock(state.clock, clockParams, {
+      onTick: (_tickIndex, _minuteAdvanced) => {
+        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+        for (const evt of events) {
+          if (evt.type === 'room-enter') {
+            panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
+          }
+        }
+        // refresh the cast panel whenever someone moved rooms
+        if (events.length > 0) panels.cast.refresh(buildCastEntries())
+      },
+      onMinute: (clock) => {
+        clockWidget?.update(clock)
+      },
+    })
+
+    // sim controls row: play/pause + speed buttons, positioned below the panels
+    simControls = buildSimControls(params.panels.cast.x, params.panels.cast.y + params.panels.cast.h + 12)
+    sceneContainer.addChild(simControls.container)
 
     pixiApp.stage.addChild(sceneContainer)
 
@@ -253,8 +418,14 @@ export function mountGame(container) {
       folder.addBinding(p, 'h', { min: 50, max: 1080, step: 1, label: 'h' }).on('change', () => panel.redraw())
     }
 
+    // clock HUD position + size
+    const clockHudFolder = uiPane.addFolder({ title: 'Clock HUD', expanded: false })
+    clockHudFolder.addBinding(params.panels.clockHud, 'x',      { min: 0, max: 2560, step: 1,  label: 'x'      }).on('change', () => clockWidget?.redraw())
+    clockHudFolder.addBinding(params.panels.clockHud, 'y',      { min: 0, max: 1440, step: 1,  label: 'y'      }).on('change', () => clockWidget?.redraw())
+    clockHudFolder.addBinding(params.panels.clockHud, 'radius', { min: 20, max: 200, step: 1,  label: 'radius' }).on('change', () => clockWidget?.redraw())
+
     // map generation debug controls
-    const mapPane = new Pane({ title: 'Map Generation' })
+    mapPane = new Pane({ title: 'Map Generation' })
     const mapParams = { seed: state.mapSeed || '' }
     mapPane.addBinding(mapParams, 'seed', { label: 'seed' })
     mapPane.addButton({ title: 'Regenerate' }).on('click', () => {
@@ -271,12 +442,57 @@ export function mountGame(container) {
       }
       asciiGrid = createAsciiGrid(params.panels.areaMap, state.map.width, state.map.height)
       asciiGrid.renderFullMap(state.map)
+
+      // re-spawn characters on the fresh map
+      state.characters = initCharacters(state.cast, state.map, newSeed)
+      renderCharacters(state.characters, asciiGrid)
+      simRng = new Chance(newSeed + '-sim')
+
+      // refresh cast panel with new character positions + colors
+      panels.cast.refresh(buildCastEntries())
+
       panels.areaMap.container.addChild(asciiGrid.container)
       mapPane.refresh()
     })
     mapPane.addButton({ title: 'Random Seed' }).on('click', () => {
       mapParams.seed = String(Date.now())
       mapPane.refresh()
+    })
+
+    // simulation debug controls
+    simPane = new Pane({ title: 'Simulation' })
+    simPane.addBinding(clockParams, 'ticksPerMinute', { min: 1, max: 10, step: 1, label: 'ticks/min' })
+    simPane.addBinding(clockParams, 'moveChance', { min: 0, max: 1, step: 0.05, label: 'move chance' })
+
+    const simClockDisplay = { time: formatClock(state.clock) }
+    simPane.addBinding(simClockDisplay, 'time', { label: 'clock', readonly: true })
+
+    // manual step buttons — only useful while paused
+    simPane.addButton({ title: 'Advance 1 Tick' }).on('click', () => {
+      if (!clockHandle?.isPaused()) return
+      const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+      for (const evt of events) {
+        if (evt.type === 'room-enter') {
+          panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
+        }
+      }
+      if (events.length > 0) panels.cast.refresh(buildCastEntries())
+    })
+    simPane.addButton({ title: 'Advance 1 Minute' }).on('click', () => {
+      if (!clockHandle?.isPaused()) return
+      for (let t = 0; t < clockParams.ticksPerMinute; t++) {
+        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+        for (const evt of events) {
+          if (evt.type === 'room-enter') {
+            panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
+          }
+        }
+        if (events.length > 0) panels.cast.refresh(buildCastEntries())
+      }
+      advanceMinute(state.clock)
+      clockWidget?.update(state.clock)
+      simClockDisplay.time = formatClock(state.clock)
+      simPane.refresh()
     })
   }
 
@@ -289,6 +505,10 @@ export function mountGame(container) {
     if (cleanedUp) return
     cleanedUp = true
 
+    // stop any running simulation batch
+    clockHandle?.stop()
+    clockHandle = null
+
     if (mouseMoveHandler) {
       window.removeEventListener('mousemove', mouseMoveHandler)
     }
@@ -300,6 +520,8 @@ export function mountGame(container) {
     asciiGrid?.destroy()
     pane?.dispose()
     uiPane?.dispose()
+    mapPane?.dispose()
+    simPane?.dispose()
 
     if (pixiApp) {
       pixiApp.destroy(true, { children: true, texture: false })
