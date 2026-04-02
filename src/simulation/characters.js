@@ -213,9 +213,10 @@ export function initCharacters(cast, mapData, seed) {
 }
 
 // render all characters onto the ascii grid
-export function renderCharacters(characters, asciiGrid) {
+export function renderCharacters(characters, asciiGrid, mapData) {
   for (const c of characters) {
-    asciiGrid.updateTile(c.x, c.y, c.glyph, c.color)
+    const bg = mapData?.bgs?.[c.y]?.[c.x] ?? 0x000000
+    asciiGrid.updateTile(c.x, c.y, c.glyph, c.color, bg)
   }
 }
 
@@ -269,8 +270,9 @@ export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance) 
     c.y = dest.y
     occupied.add(`${c.x},${c.y}`)
 
-    // render character at new position — drawOver preserves the tile bg
-    asciiGrid.updateTile(c.x, c.y, c.glyph, c.color)
+    // render character at new position with the tile's bg color
+    const destBg = mapData.bgs?.[c.y]?.[c.x] ?? 0x000000
+    asciiGrid.updateTile(c.x, c.y, c.glyph, c.color, destBg)
 
     // check for room transition
     const newRoom = findRoomAt(c.x, c.y, mapData.rooms)

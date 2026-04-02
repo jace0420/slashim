@@ -52,6 +52,12 @@ export function createRotDisplay(mapW, mapH, cellPx = 16) {
     display.clear()
   }
 
+  // ROT.js defers all canvas drawing to requestAnimationFrame via its _tick() loop.
+  // Call flush() to force synchronous drawing before reading from the canvas (e.g. before a GPU upload).
+  function flush() {
+    display._tick()
+  }
+
   function destroy() {
     display.clear()
     canvas.remove()
@@ -64,6 +70,7 @@ export function createRotDisplay(mapW, mapH, cellPx = 16) {
     drawOver,
     renderFullMap,
     clear,
+    flush,
     destroy,
     gridW,
     gridH,

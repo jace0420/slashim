@@ -9,23 +9,23 @@ export function createAsciiGrid(mapW, mapH, cellPx = 16) {
 
   function updateTile(x, y, char, color, bg) {
     const fg = typeof color === 'string' ? color : tintToCSS(color)
-    const bgCSS = bg != null ? (typeof bg === 'string' ? bg : tintToCSS(bg)) : null
-    if (bgCSS != null) {
-      rot.draw(x, y, char, fg, bgCSS)
-    } else {
-      // use drawOver to preserve existing background when no bg is provided
-      rot.drawOver(x, y, char, fg, null)
-    }
+    const bgCSS = bg != null ? (typeof bg === 'string' ? bg : tintToCSS(bg)) : '#000000'
+    rot.draw(x, y, char, fg, bgCSS)
     bridge.markDirty()
   }
 
   function renderFullMap(mapData) {
     rot.renderFullMap(mapData)
+    // ROT defers canvas drawing to rAF; force it to draw synchronously so the
+    // canvas has content before we push to the GPU texture.
+    rot.flush()
     bridge.refresh()
   }
 
   // call once per frame (e.g. end of tick) to push any pending draws to the GPU
   function flush() {
+    // Force ROT to draw all pending tile changes to the canvas before uploading.
+    rot.flush()
     bridge.flushIfDirty()
   }
 

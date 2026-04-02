@@ -3,7 +3,7 @@ import { Container, Sprite, Texture } from 'pixi.js'
 // bridges a ROT.Display canvas into the PixiJS scene graph as a single textured sprite.
 // call refresh() after any ROT.Display draw calls to push changes to the GPU.
 export function createRotBridge(rotCanvas) {
-  const texture = Texture.from({ resource: rotCanvas, antialias: false })
+  const texture = Texture.from(rotCanvas)
   const sprite = new Sprite(texture)
   const container = new Container()
   container.addChild(sprite)

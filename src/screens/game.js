@@ -260,14 +260,20 @@ export function mountGame(container) {
     debugPrintMap(state.map)
 
     asciiGrid = createAsciiGrid(state.map.width, state.map.height, 16)
-    asciiGrid.renderFullMap(state.map)
-    mapVP.content.addChild(asciiGrid.container)
-    mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
     // spawn characters
     state.characters = initCharacters(state.cast, state.map, state.mapSeed)
-    renderCharacters(state.characters, asciiGrid)
     simRng = new Chance(state.mapSeed + '-sim')
+
+    asciiGrid.renderFullMap(state.map)
+    renderCharacters(state.characters, asciiGrid, state.map)
+    // Force ROT to draw pending tile changes to the canvas and push to the GPU
+    // texture now. Without this, ROT's rAF-deferred draw may lose the race
+    // against PixiJS's first render frame, resulting in a blank initial map.
+    asciiGrid.flush()
+
+    mapVP.content.addChild(asciiGrid.container)
+    mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
     // --- HUD overlay layer (sits on top of the map) ---
     const hudLayer = new Container()
@@ -357,7 +363,7 @@ export function mountGame(container) {
       applyLayout()
     })
 
-    // --- wheel: zoom map or scroll panels ---
+    // --- wheel: scroll panels ---
     wheelHandler = (e) => {
       if (!pixiApp) return
       const rect = pixiApp.canvas.getBoundingClientRect()
@@ -377,13 +383,6 @@ export function mountGame(container) {
           e.preventDefault()
           return
         }
-      }
-
-      // otherwise zoom the map
-      const mb = mapVP.bounds
-      if (cx >= mb.x && cx <= mb.x + mb.w && cy >= mb.y && cy <= mb.y + mb.h) {
-        mapVP.zoomAt(cx - mb.x, cy - mb.y, e.deltaY)
-        e.preventDefault()
       }
     }
     pixiApp.canvas.addEventListener('wheel', wheelHandler, { passive: false })
@@ -423,7 +422,7 @@ export function mountGame(container) {
       mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
       state.characters = initCharacters(state.cast, state.map, newSeed)
-      renderCharacters(state.characters, asciiGrid)
+      renderCharacters(state.characters, asciiGrid, state.map)
       asciiGrid.flush()
       simRng = new Chance(newSeed + '-sim')
       panels.cast.refresh(buildCastEntries())
