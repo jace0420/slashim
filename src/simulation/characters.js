@@ -205,11 +205,6 @@ export function initCharacters(cast, mapData, seed) {
       needs,
       health: 'FINE',
       mood: deriveMood({ needs }),
-      // the tile data underneath this character so we can restore it when they move
-      previousTile: {
-        char: mapData.chars[pos.y][pos.x],
-        color: mapData.colors[pos.y][pos.x],
-      },
     }
     characters.push(character)
   }
@@ -262,20 +257,19 @@ export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance) 
     // TODO: pathfinding, room-seeking behavior, personality-driven direction bias, flee/chase AI
     const dest = rng.pickone(options)
 
-    // restore the tile we were standing on
-    asciiGrid.updateTile(c.x, c.y, c.previousTile.char, c.previousTile.color)
+    // restore the base tile where we were standing
+    const prevChar = mapData.chars[c.y][c.x]
+    const prevColor = mapData.colors[c.y][c.x]
+    const prevBg = mapData.bgs?.[c.y]?.[c.x]
+    asciiGrid.updateTile(c.x, c.y, prevChar, prevColor, prevBg)
     occupied.delete(`${c.x},${c.y}`)
 
     // move
-    c.previousTile = {
-      char: mapData.chars[dest.y][dest.x],
-      color: mapData.colors[dest.y][dest.x],
-    }
     c.x = dest.x
     c.y = dest.y
     occupied.add(`${c.x},${c.y}`)
 
-    // render at new position
+    // render character at new position — drawOver preserves the tile bg
     asciiGrid.updateTile(c.x, c.y, c.glyph, c.color)
 
     // check for room transition

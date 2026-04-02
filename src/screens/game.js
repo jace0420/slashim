@@ -320,6 +320,7 @@ export function mountGame(container) {
     clockHandle = createClock(state.clock, clockParams, {
       onTick: (_tickIndex, _minuteAdvanced) => {
         const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+        asciiGrid.flush()
         for (const evt of events) {
           if (evt.type === 'room-enter') {
             panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
@@ -423,6 +424,7 @@ export function mountGame(container) {
 
       state.characters = initCharacters(state.cast, state.map, newSeed)
       renderCharacters(state.characters, asciiGrid)
+      asciiGrid.flush()
       simRng = new Chance(newSeed + '-sim')
       panels.cast.refresh(buildCastEntries())
 
@@ -457,6 +459,7 @@ export function mountGame(container) {
     simPane.addButton({ title: 'Advance 1 Tick' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
       const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+      asciiGrid.flush()
       for (const evt of events) {
         if (evt.type === 'room-enter') {
           panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
@@ -475,6 +478,7 @@ export function mountGame(container) {
         }
         if (events.length > 0) panels.cast.refresh(buildCastEntries())
       }
+      asciiGrid.flush()
       advanceMinute(state.clock)
       minuteTickCharacters(state.characters)
       panels.cast.refresh(buildCastEntries())

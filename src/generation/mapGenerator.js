@@ -173,24 +173,27 @@ function cleanupDoubleDoors(grid) {
   }
 }
 
-// convert tile grid into char and color grids for rendering
+// convert tile grid into char, color, and bg grids for rendering
 function buildDisplayGrids(grid) {
   const h = grid.length
   const w = grid[0].length
   const chars = []
   const colors = []
+  const bgs = []
 
   for (let y = 0; y < h; y++) {
     chars[y] = []
     colors[y] = []
+    bgs[y] = []
     for (let x = 0; x < w; x++) {
       const display = TILE_DISPLAY[grid[y][x]] || TILE_DISPLAY[Tile.VOID]
       chars[y][x] = display.char
       colors[y][x] = display.color
+      bgs[y][x] = display.bg ?? 0x000000
     }
   }
 
-  return { chars, colors }
+  return { chars, colors, bgs }
 }
 
 // dump the map to the console for debug
@@ -236,7 +239,7 @@ export function generateMap(templateId = 'manor', seed) {
   // kill leftover double doors
   cleanupDoubleDoors(grid)
 
-  const { chars, colors } = buildDisplayGrids(grid)
+  const { chars, colors, bgs } = buildDisplayGrids(grid)
 
   return {
     width: mapW,
@@ -244,6 +247,7 @@ export function generateMap(templateId = 'manor', seed) {
     tiles: grid,
     chars,
     colors,
+    bgs,
     rooms: placedRooms,
     seed: rng.seed,
   }
