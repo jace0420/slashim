@@ -5,7 +5,7 @@ import Chance from 'chance'
 import { showScreen } from '../router'
 import { createPixiApp } from '../rendering/createPixiApp'
 import { createAsciiGrid } from '../rendering/asciiGrid'
-import { buildCastPanel, buildNarrativePanel } from '../ui/panels'
+import { buildCastPanel, buildCharacterTooltip, buildNarrativePanel } from '../ui/panels'
 import { buildClockWidget } from '../ui/clockWidget'
 import { computeLayout, DEFAULT_HUD_PARAMS } from '../ui/hudLayout'
 import { createMapViewport } from '../ui/mapViewport'
@@ -13,7 +13,7 @@ import { createTabStrip } from '../ui/tabStrip'
 import { generateMap, debugPrintMap } from '../generation/mapGenerator'
 import { state } from '../store/gameState'
 import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFAULT_CLOCK_PARAMS } from '../simulation/clock'
-import { initCharacters, renderCharacters, tickCharacters, minuteTickCharacters } from '../simulation/characters'
+import { getCharacterNeedSummaries, getTopNeedCues, initCharacters, renderCharacters, tickCharacters, minuteTickCharacters } from '../simulation/characters'
 import socialTopics from '../data/social/topics.json'
 
 function shouldShowTweakPane() {
@@ -69,6 +69,8 @@ export function mountGame(container) {
   let simControls = null
   let simRng = null
   let minuteCount = 0
+  let characterTooltip = null
+  let lastMapPointerGlobal = null
 
   const clockParams = { ...DEFAULT_CLOCK_PARAMS }
   const hudParams = { ...DEFAULT_HUD_PARAMS }
@@ -119,6 +121,8 @@ export function mountGame(container) {
     panels.narrative?.redraw()
     panels.cast?.redraw()
     clockWidget?.redraw()
+    refreshCharacterInspectionUI()
+    refreshHoverFromPointer()
 
     // reposition sim controls next to the clock
     if (simControls) {
@@ -136,6 +140,7 @@ export function mountGame(container) {
         room = state.map?.rooms[char.roomIndex]?.def?.label ?? null
       }
       return {
+        castIndex: i,
         name: castEntry.name,
         archetype: castEntry.archetype,
         color: char?.color ?? null,
@@ -144,6 +149,139 @@ export function mountGame(container) {
         mood:   char?.mood   ?? null,
       }
     })
+  }
+
+  function getCharacterByCastIndex(castIndex) {
+    return state.characters.find((character) => character.castIndex === castIndex) ?? null
+  }
+
+  function buildCharacterDetail(castIndex) {
+    if (castIndex == null) return null
+
+    const castEntry = state.cast[castIndex]
+    const character = getCharacterByCastIndex(castIndex)
+    if (!castEntry || !character) return null
+
+    const room = character.roomIndex >= 0
+      ? (state.map?.rooms[character.roomIndex]?.def?.label ?? null)
+      : null
+
+    return {
+      castIndex,
+      name: character.name,
+      archetype: castEntry.archetype,
+      room,
+      color: character.color,
+      health: character.health,
+      mood: character.mood,
+      topNeedCues: getTopNeedCues(character, 2),
+      needSummaries: getCharacterNeedSummaries(character),
+    }
+  }
+
+  function buildTooltipData(castIndex) {
+    const character = getCharacterByCastIndex(castIndex)
+    if (!character) return null
+
+    return {
+      castIndex,
+      name: character.name,
+      color: character.color,
+      topNeedCues: getTopNeedCues(character, 2),
+    }
+  }
+
+  function refreshCharacterInspectionUI() {
+    if (!panels.cast) return
+
+    const detail = buildCharacterDetail(state.inspection.selectedCastIndex)
+    if (!detail && state.inspection.selectedCastIndex != null) {
+      state.inspection.selectedCastIndex = null
+    }
+
+    panels.cast.refresh(buildCastEntries(), detail)
+  }
+
+  function refreshTooltip() {
+    if (!characterTooltip) return
+
+    if (!state.inspection.tooltip.visible || state.inspection.hoveredCastIndex == null) {
+      characterTooltip.hide()
+      return
+    }
+
+    const data = buildTooltipData(state.inspection.hoveredCastIndex)
+    if (!data) {
+      characterTooltip.hide()
+      return
+    }
+
+    characterTooltip.show(data, state.inspection.tooltip, mapVP.bounds)
+  }
+
+  function setSelectedCharacter(castIndex) {
+    state.inspection.selectedCastIndex = castIndex
+    refreshCharacterInspectionUI()
+  }
+
+  function clearSelectedCharacter() {
+    state.inspection.selectedCastIndex = null
+    refreshCharacterInspectionUI()
+  }
+
+  function setHoveredCharacter(castIndex, globalPoint) {
+    state.inspection.hoveredCastIndex = castIndex
+    state.inspection.tooltip.visible = castIndex != null
+    if (globalPoint) {
+      state.inspection.tooltip.x = globalPoint.x
+      state.inspection.tooltip.y = globalPoint.y
+    }
+    refreshTooltip()
+  }
+
+  function clearHoveredCharacter() {
+    state.inspection.hoveredCastIndex = null
+    state.inspection.tooltip.visible = false
+    refreshTooltip()
+  }
+
+  function findCharacterAtGrid(gx, gy) {
+    return state.characters.find((character) => character.x === gx && character.y === gy) ?? null
+  }
+
+  function syncHoverFromPoint(globalPoint) {
+    if (!globalPoint || !asciiGrid || !state.map) {
+      clearHoveredCharacter()
+      return
+    }
+
+    const local = mapVP.toContentPoint(globalPoint)
+    if (local.x < 0 || local.y < 0 || local.x >= asciiGrid.gridW || local.y >= asciiGrid.gridH) {
+      clearHoveredCharacter()
+      return
+    }
+
+    const cellW = asciiGrid.gridW / state.map.width
+    const cellH = asciiGrid.gridH / state.map.height
+    const gx = Math.floor(local.x / cellW)
+    const gy = Math.floor(local.y / cellH)
+    const character = findCharacterAtGrid(gx, gy)
+
+    if (!character) {
+      clearHoveredCharacter()
+      return
+    }
+
+    setHoveredCharacter(character.castIndex, globalPoint)
+  }
+
+  function refreshHoverFromPointer() {
+    if (!lastMapPointerGlobal) {
+      clearHoveredCharacter()
+      return
+    }
+
+    syncHoverFromPoint(lastMapPointerGlobal)
   }
 
   // sim controls row: play/pause toggle + speed buttons
@@ -277,6 +415,20 @@ export function mountGame(container) {
     mapVP.content.addChild(asciiGrid.container)
     mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
+    mapVP.interactionLayer.on('pointermove', (event) => {
+      lastMapPointerGlobal = { x: event.global.x, y: event.global.y }
+      syncHoverFromPoint(lastMapPointerGlobal)
+    })
+    mapVP.interactionLayer.on('pointerleave', () => {
+      lastMapPointerGlobal = null
+      clearHoveredCharacter()
+    })
+    mapVP.interactionLayer.on('pointerdown', () => {
+      if (state.inspection.hoveredCastIndex != null) {
+        setSelectedCharacter(state.inspection.hoveredCastIndex)
+      }
+    })
+
     // --- HUD overlay layer (sits on top of the map) ---
     const hudLayer = new Container()
     sceneContainer.addChild(hudLayer)
@@ -298,11 +450,17 @@ export function mountGame(container) {
       w: layout.rightSidebar.w,
       h: layout.rightSidebar.h,
     })
-    panels.cast = buildCastPanel(panelParams.cast, state.cast)
+    panels.cast = buildCastPanel(panelParams.cast, state.cast, {
+      onSelect: setSelectedCharacter,
+      onBack: clearSelectedCharacter,
+    })
     hudLayer.addChild(panels.cast.container)
 
     // refresh cast with sim state
-    panels.cast.refresh(buildCastEntries())
+    refreshCharacterInspectionUI()
+
+    characterTooltip = buildCharacterTooltip()
+    hudLayer.addChild(characterTooltip.container)
 
     // clock widget — top-left
     Object.assign(panelParams.clockHud, {
@@ -334,7 +492,8 @@ export function mountGame(container) {
             panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
           }
         }
-        if (events.length > 0) panels.cast.refresh(buildCastEntries())
+        refreshCharacterInspectionUI()
+        refreshHoverFromPointer()
       },
       onMinute: (clock) => {
         minuteCount++
@@ -342,7 +501,8 @@ export function mountGame(container) {
         for (const evt of socialEvents) {
           if (evt.type === 'social-talk') panels.narrative.appendEntry(evt.text)
         }
-        panels.cast.refresh(buildCastEntries())
+        refreshCharacterInspectionUI()
+        refreshHoverFromPointer()
         clockWidget?.update(clock)
       },
     })
@@ -431,7 +591,8 @@ export function mountGame(container) {
       renderCharacters(state.characters, asciiGrid, state.map)
       asciiGrid.flush()
       simRng = new Chance(newSeed + '-sim')
-      panels.cast.refresh(buildCastEntries())
+      refreshCharacterInspectionUI()
+      refreshHoverFromPointer()
 
       mapPane.refresh()
     })
@@ -470,7 +631,8 @@ export function mountGame(container) {
           panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
         }
       }
-      if (events.length > 0) panels.cast.refresh(buildCastEntries())
+      refreshCharacterInspectionUI()
+      refreshHoverFromPointer()
     })
     simPane.addButton({ title: 'Advance 1 Minute' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
@@ -481,12 +643,12 @@ export function mountGame(container) {
             panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
           }
         }
-        if (events.length > 0) panels.cast.refresh(buildCastEntries())
       }
       asciiGrid.flush()
       advanceMinute(state.clock)
       minuteTickCharacters(state.characters)
-      panels.cast.refresh(buildCastEntries())
+      refreshCharacterInspectionUI()
+      refreshHoverFromPointer()
       clockWidget?.update(state.clock)
       simClockDisplay.time = formatClock(state.clock)
       simPane.refresh()

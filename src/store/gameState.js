@@ -37,6 +37,15 @@ export const state = {
   clock: null,       // { hour, minute, meridiem } — set from meta on game start
   characters: [],    // runtime character entries with position, color, etc.
   simulation: null,  // { running } — tracks whether the clock loop is active
+  inspection: {
+    hoveredCastIndex: null,
+    selectedCastIndex: null,
+    tooltip: {
+      visible: false,
+      x: 0,
+      y: 0,
+    },
+  },
 }
 
 export function resetGameState() {
@@ -48,6 +57,15 @@ export function resetGameState() {
   state.clock = null
   state.characters = []
   state.simulation = null
+  state.inspection = {
+    hoveredCastIndex: null,
+    selectedCastIndex: null,
+    tooltip: {
+      visible: false,
+      x: 0,
+      y: 0,
+    },
+  }
   return state
 }
 

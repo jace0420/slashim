@@ -19,7 +19,18 @@ export function createMapViewport(bounds) {
   const content = new Container()
   viewport.addChild(content)
 
+  const interactionLayer = new Graphics()
+  interactionLayer.eventMode = 'static'
+  interactionLayer.cursor = 'pointer'
+  viewport.addChild(interactionLayer)
+
   let zoom = 1
+
+  function redrawInteractionLayer() {
+    interactionLayer.clear()
+    interactionLayer.rect(0, 0, bounds.w, bounds.h)
+      .fill({ color: 0xffffff, alpha: 0.001 })
+  }
 
   // center the content within the viewport at current zoom
   function centerContent() {
@@ -46,18 +57,27 @@ export function createMapViewport(bounds) {
     clipMask.clear()
     clipMask.rect(0, 0, bounds.w, bounds.h).fill({ color: 0xffffff })
     centerContent()
+    redrawInteractionLayer()
+  }
+
+  function toContentPoint(globalPoint) {
+    return content.toLocal(globalPoint)
   }
 
   function destroy() {
     viewport.destroy({ children: true })
   }
 
+  redrawInteractionLayer()
+
   return {
     viewport,
     content,
+    interactionLayer,
     fitToView,
     resize,
     destroy,
+    toContentPoint,
     get bounds() { return bounds },
   }
 }

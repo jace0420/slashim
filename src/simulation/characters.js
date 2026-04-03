@@ -55,6 +55,22 @@ const NEEDS_DEFAULTS = {
   adrenaline:  0,
 }
 
+export const CHARACTER_NEED_KEYS = Object.keys(NEEDS_DEFAULTS)
+
+const ACCUMULATING_NEEDS = new Set(['boredom', 'fear', 'adrenaline'])
+
+const NEED_PRESENTATION = {
+  energy:     { label: 'Energy',     goodCue: 'Energized',  badCue: 'Tired' },
+  stamina:    { label: 'Stamina',    goodCue: 'Rested',     badCue: 'Winded' },
+  hunger:     { label: 'Hunger',     goodCue: 'Well-fed',   badCue: 'Hungry' },
+  thirst:     { label: 'Thirst',     goodCue: 'Hydrated',   badCue: 'Thirsty' },
+  social:     { label: 'Social',     goodCue: 'Connected',  badCue: 'Lonely' },
+  sanity:     { label: 'Sanity',     goodCue: 'Grounded',   badCue: 'Unsettled' },
+  boredom:    { label: 'Boredom',    goodCue: 'Engaged',    badCue: 'Bored' },
+  fear:       { label: 'Fear',       goodCue: 'Calm',       badCue: 'Afraid' },
+  adrenaline: { label: 'Adrenaline', goodCue: 'Relaxed',    badCue: 'Amped' },
+}
+
 // max ±variation applied to each default at spawn time so characters don't all start identical
 const NEEDS_JITTER = 5
 
@@ -91,8 +107,40 @@ function initNeeds(rng) {
 // depleting stats: 1 when full, 0 when empty.
 // accumulating stats: 1 when calm (0), 0 when maxed (100).
 function statGoodness(key, value) {
-  const accumulating = key === 'boredom' || key === 'fear' || key === 'adrenaline'
+  const accumulating = ACCUMULATING_NEEDS.has(key)
   return accumulating ? (100 - value) / 100 : value / 100
+}
+
+export function getNeedUrgency(key, value) {
+  return ACCUMULATING_NEEDS.has(key) ? value : 100 - value
+}
+
+export function getNeedPresentation(key) {
+  return NEED_PRESENTATION[key] ?? { label: key, goodCue: key, badCue: key }
+}
+
+export function getCharacterNeedSummaries(character) {
+  return CHARACTER_NEED_KEYS
+    .map((key) => {
+      const value = Math.round(character.needs[key] ?? 0)
+      const urgency = getNeedUrgency(key, value)
+      const presentation = getNeedPresentation(key)
+      return {
+        key,
+        value,
+        urgency,
+        label: presentation.label,
+        cue: urgency > 50 ? presentation.badCue : presentation.goodCue,
+        accumulating: ACCUMULATING_NEEDS.has(key),
+      }
+    })
+    .sort((a, b) => b.urgency - a.urgency)
+}
+
+export function getTopNeedCues(character, limit = 2) {
+  return getCharacterNeedSummaries(character)
+    .slice(0, limit)
+    .map((need) => need.cue)
 }
 
 // derive the HEALTH label from a character's current state.
@@ -104,7 +152,7 @@ function deriveHealth(_character) {
 
 // derive the MOOD label from the average normalized goodness of all needs.
 function deriveMood(character) {
-  const keys = Object.keys(NEEDS_DEFAULTS)
+  const keys = CHARACTER_NEED_KEYS
   const avg = keys.reduce((sum, k) => sum + statGoodness(k, character.needs[k]), 0) / keys.length
   // TODO: weight health state heavily — HURT or worse should drag mood toward TERRIBLE
   // TODO: fear > 70 or adrenaline > 70 should override mood to 'TERRIBLE' regardless of other stats
