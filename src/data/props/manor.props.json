@@ -1,0 +1,23 @@
+[
+  {
+    "id": "sofa",
+    "label": "Sofa",
+    "category": "obstacle",
+    "orientations": {
+      "north": { "w": 4, "h": 1, "glyphs": [["/", "T", "T", "\\"]] },
+      "south": { "w": 4, "h": 1, "glyphs": [["\\", "T", "T", "/"]] },
+      "east":  { "w": 1, "h": 4, "glyphs": [["/"], ["T"], ["T"], ["\\"]] },
+      "west":  { "w": 1, "h": 4, "glyphs": [["\\"], ["T"], ["T"], ["/"]] }
+    },
+    "color": "0xaa8866",
+    "bg": null,
+    "allowedRoomIds": ["living-room"],
+    "placement": {
+      "wallAdjacent": true,
+      "clearance": 1,
+      "padding": 1
+    },
+    "count": { "min": 1, "max": 2 },
+    "blocking": true
+  }
+]

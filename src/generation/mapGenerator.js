@@ -2,12 +2,15 @@ import Chance from 'chance'
 import { Tile, TILE_DISPLAY, createGrid, inBounds, isWalkable } from './tileTypes.js'
 import { tryPlaceRoom } from './roomPlacer.js'
 import { connectRooms } from './hallways.js'
+import { placeProps, stampProps } from './propPlacer.js'
 
 import manorRooms from '../data/rooms/manor.rooms.json'
 import manorTemplate from '../data/templates/manor.template.json'
+import manorProps from '../data/props/manor.props.json'
 
 const TEMPLATES = { manor: manorTemplate }
 const ROOM_DEFS = { manor: manorRooms }
+const PROP_DEFS = { manor: manorProps }
 
 // cardinal neighbor offsets
 const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]]
@@ -239,7 +242,14 @@ export function generateMap(templateId = 'manor', seed) {
   // kill leftover double doors
   cleanupDoubleDoors(grid)
 
+  // place props (furniture/obstacles) inside rooms
+  const propDefs = PROP_DEFS[templateId] || []
+  const { propMap, placedProps } = placeProps(grid, placedRooms, propDefs, rng)
+
   const { chars, colors, bgs } = buildDisplayGrids(grid)
+
+  // stamp prop glyphs on top of floor tiles in the display grids
+  stampProps(chars, colors, bgs, placedProps, propDefs)
 
   return {
     width: mapW,
@@ -249,6 +259,8 @@ export function generateMap(templateId = 'manor', seed) {
     colors,
     bgs,
     rooms: placedRooms,
+    propMap,
+    placedProps,
     seed: rng.seed,
   }
 }

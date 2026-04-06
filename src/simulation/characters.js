@@ -321,7 +321,8 @@ function randomFloorInRoom(room, mapData, occupied, rng) {
 
   for (let y = room.y; y < room.y + room.h; y++) {
     for (let x = room.x; x < room.x + room.w; x++) {
-      if (mapData.tiles[y][x] === Tile.FLOOR && !occupied.has(`${x},${y}`)) {
+      if (mapData.tiles[y][x] === Tile.FLOOR && !occupied.has(`${x},${y}`)
+        && (mapData.propMap?.[y]?.[x] == null)) {
         candidates.push({ x, y })
       }
     }
@@ -427,6 +428,7 @@ export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance) 
       const ny = c.y + dy
       if (!inBounds(mapData.tiles, nx, ny)) continue
       if (!isWalkable(mapData.tiles[ny][nx])) continue
+      if (mapData.propMap?.[ny]?.[nx] !== null && mapData.propMap?.[ny]?.[nx] !== undefined) continue
       if (occupied.has(`${nx},${ny}`)) continue
       options.push({ x: nx, y: ny })
     }

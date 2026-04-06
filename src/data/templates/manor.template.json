@@ -3,6 +3,7 @@
   "label": "Manor",
   "mapSize": { "width": 48, "height": 48 },
   "roomsFile": "manor.rooms.json",
+  "propsFile": "manor.props.json",
   "maxRooms": 14,
   "minRooms": 8,
   "hallwayWidth": 1,
