@@ -3,6 +3,43 @@
 
 import { Tile, inBounds } from './tileTypes.js'
 
+// transpose a 2D glyph array (rows become cols). used when deriving
+// east/west orientations from a north/south ref.
+function transposeGlyphs(glyphs) {
+  const rows = glyphs.length
+  const cols = glyphs[0].length
+  const out = []
+  for (let c = 0; c < cols; c++) {
+    out[c] = []
+    for (let r = 0; r < rows; r++) {
+      out[c][r] = glyphs[r][c]
+    }
+  }
+  return out
+}
+
+// resolve ref-based orientations so every orientation has concrete w, h, glyphs, rotation.
+// mutates the propDef.orientations in place for convenience.
+export function resolveOrientations(propDef) {
+  const orients = propDef.orientations
+  for (const [dir, orient] of Object.entries(orients)) {
+    if (orient.ref) {
+      const base = orients[orient.ref]
+      if (!base || !base.glyphs) throw new Error(`prop ${propDef.id}: orientation '${dir}' refs unknown '${orient.ref}'`)
+      const transposed = transposeGlyphs(base.glyphs)
+      orients[dir] = {
+        w: base.h,            // transpose flips dims
+        h: base.w,
+        glyphs: transposed,
+        rotation: orient.rotation ?? 0,
+      }
+    } else {
+      // make sure concrete orientations have a rotation field
+      orient.rotation = orient.rotation ?? 0
+    }
+  }
+}
+
 // wall direction → the offset to check for a wall tile on the "back" side,
 // and the offset for clearance checks in front of the prop
 const WALL_INFO = {
@@ -147,10 +184,10 @@ function isValidPlacement(grid, propMap, room, propDef, px, py, orient, wallInfo
 
 // stamp a placed prop into the propMap
 function writePropMap(propMap, px, py, orient, propId) {
-  const { w: pw, h: ph } = orient
+  const { w: pw, h: ph, rotation } = orient
   for (let dy = 0; dy < ph; dy++) {
     for (let dx = 0; dx < pw; dx++) {
-      propMap[py + dy][px + dx] = { propId, originX: px, originY: py }
+      propMap[py + dy][px + dx] = { propId, originX: px, originY: py, rotation: rotation ?? 0 }
     }
   }
 }
@@ -162,6 +199,9 @@ export function placeProps(grid, rooms, propDefs, rng) {
   const w = grid[0].length
   const propMap = createPropMap(w, h)
   const placedProps = []
+
+  // resolve ref-based orientations once up front
+  for (const def of propDefs) resolveOrientations(def)
 
   for (const room of rooms) {
     const roomId = room.def.id
@@ -180,6 +220,7 @@ export function placeProps(grid, rooms, propDefs, rng) {
         writePropMap(propMap, pick.x, pick.y, pick.orient, propDef.id)
 
         placedProps.push({
+          instanceId: `${propDef.id}-${placedProps.length}`,
           propId: propDef.id,
           x: pick.x,
           y: pick.y,
@@ -196,25 +237,48 @@ export function placeProps(grid, rooms, propDefs, rng) {
 
 // write prop glyphs into the display grids (chars/colors/bgs).
 // called after buildDisplayGrids so floor bgs are already set.
+// returns rotatedCells — cells that need canvas-level rotation at render time.
 export function stampProps(chars, colors, bgs, placedProps, propDefs) {
   // index prop defs by id for quick lookup
   const defMap = {}
   for (const def of propDefs) defMap[def.id] = def
 
+  const rotatedCells = []
+
   for (const placed of placedProps) {
     const def = defMap[placed.propId]
-    const { glyphs } = placed.orient
+    const { glyphs, rotation } = placed.orient
     const color = parseInt(def.color, 16)
+    const colorCSS = '#' + (color & 0xffffff).toString(16).padStart(6, '0')
 
     for (let dy = 0; dy < glyphs.length; dy++) {
       for (let dx = 0; dx < glyphs[dy].length; dx++) {
         const tx = placed.x + dx
         const ty = placed.y + dy
-        chars[ty][tx] = glyphs[dy][dx]
-        colors[ty][tx] = color
-        // if prop bg is null, keep the existing floor bg (already in bgs array)
+
+        if (rotation !== 0) {
+          // rotated cell — leave the floor glyph for ROT to draw the bg,
+          // and collect the actual glyph for canvas post-draw rotation
+          const bg = bgs[ty][tx] ?? 0x000000
+          const bgCSS = '#' + (bg & 0xffffff).toString(16).padStart(6, '0')
+          rotatedCells.push({
+            x: tx, y: ty,
+            char: glyphs[dy][dx],
+            fg: colorCSS,
+            bg: bgCSS,
+            rotation,
+          })
+        } else {
+          // normal cell — stamp directly
+          chars[ty][tx] = glyphs[dy][dx]
+          colors[ty][tx] = color
+        }
+
+        // prop bg override (rare, usually null → inherit floor bg)
         if (def.bg !== null) bgs[ty][tx] = parseInt(def.bg, 16)
       }
     }
   }
+
+  return rotatedCells
 }

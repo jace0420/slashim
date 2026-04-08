@@ -24,6 +24,13 @@ export function createRotDisplay(mapW, mapH, cellPx = 16) {
   const gridW = canvas.width
   const gridH = canvas.height
 
+  // per-cell pixel dims (ROT forces square cells when forceSquareRatio is on)
+  const spacingX = Math.ceil(gridW / mapW)
+  const spacingY = Math.ceil(gridH / mapH)
+
+  // the font string ROT is using (needed if we draw outside of ROT)
+  const font = `${cellPx}px monospace`
+
   function draw(x, y, char, fg, bg) {
     display.draw(x, y, char, fg ?? null, bg ?? null)
   }
@@ -74,5 +81,8 @@ export function createRotDisplay(mapW, mapH, cellPx = 16) {
     destroy,
     gridW,
     gridH,
+    spacingX,
+    spacingY,
+    font,
   }
 }

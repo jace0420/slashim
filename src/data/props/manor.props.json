@@ -3,11 +3,27 @@
     "id": "sofa",
     "label": "Sofa",
     "category": "obstacle",
+    "interaction": {
+      "mode": "front-edge",
+      "offset": 1
+    },
+    "affordances": {
+      "rest": {
+        "comfort": 1.5,
+        "capacity": 2,
+        "posture": "sit",
+        "recoveryPerTick": 0.55
+      },
+      "social": {
+        "quality": 0.4,
+        "radius": 3
+      }
+    },
     "orientations": {
-      "north": { "w": 4, "h": 1, "glyphs": [["/", "T", "T", "\\"]] },
-      "south": { "w": 4, "h": 1, "glyphs": [["\\", "T", "T", "/"]] },
-      "east":  { "w": 1, "h": 4, "glyphs": [["/"], ["T"], ["T"], ["\\"]] },
-      "west":  { "w": 1, "h": 4, "glyphs": [["\\"], ["T"], ["T"], ["/"]] }
+      "north": { "w": 4, "h": 1, "glyphs": [["[", "▀", "▀", "]"]], "rotation": 0 },
+      "south": { "w": 4, "h": 1, "glyphs": [["[", "▄", "▄", "]"]], "rotation": 0 },
+      "east":  { "ref": "north", "rotation": 90 },
+      "west":  { "ref": "north", "rotation": -90 }
     },
     "color": "0xaa8866",
     "bg": null,

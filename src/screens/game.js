@@ -13,7 +13,16 @@ import { createTabStrip } from '../ui/tabStrip'
 import { generateMap, debugPrintMap } from '../generation/mapGenerator'
 import { state } from '../store/gameState'
 import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFAULT_CLOCK_PARAMS } from '../simulation/clock'
-import { getCharacterNeedSummaries, getTopNeedCues, initCharacters, renderCharacters, tickCharacters, minuteTickCharacters } from '../simulation/characters'
+import {
+  getCharacterBehaviorSummary,
+  getCharacterBehaviorTarget,
+  getCharacterNeedSummaries,
+  getTopNeedCues,
+  initCharacters,
+  renderCharacters,
+  tickCharacters,
+  minuteTickCharacters,
+} from '../simulation/characters'
 import socialTopics from '../data/social/topics.json'
 
 function shouldShowTweakPane() {
@@ -145,6 +154,8 @@ export function mountGame(container) {
         archetype: castEntry.archetype,
         color: char?.color ?? null,
         room,
+        behavior: char ? getCharacterBehaviorSummary(char) : null,
+        behaviorTarget: char ? getCharacterBehaviorTarget(char) : null,
         health: char?.health ?? null,
         mood:   char?.mood   ?? null,
       }
@@ -174,6 +185,8 @@ export function mountGame(container) {
       color: character.color,
       health: character.health,
       mood: character.mood,
+      behavior: getCharacterBehaviorSummary(character),
+      behaviorTarget: getCharacterBehaviorTarget(character),
       topNeedCues: getTopNeedCues(character, 2),
       needSummaries: getCharacterNeedSummaries(character),
     }
@@ -187,6 +200,7 @@ export function mountGame(container) {
       castIndex,
       name: character.name,
       color: character.color,
+      behavior: getCharacterBehaviorSummary(character),
       topNeedCues: getTopNeedCues(character, 2),
     }
   }
@@ -405,6 +419,7 @@ export function mountGame(container) {
     state.characters = initCharacters(state.cast, state.map, state.mapSeed)
     simRng = new Chance(state.mapSeed + '-sim')
 
+    asciiGrid.setRotatedCells(state.map.rotatedCells)
     asciiGrid.renderFullMap(state.map)
     renderCharacters(state.characters, asciiGrid, state.map)
     // Force ROT to draw pending tile changes to the canvas and push to the GPU
@@ -484,8 +499,8 @@ export function mountGame(container) {
 
     // clock handle — starts paused
     clockHandle = createClock(state.clock, clockParams, {
-      onTick: (_tickIndex, _minuteAdvanced) => {
-        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+      onTick: (tickIndex, _minuteAdvanced) => {
+        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics)
         asciiGrid.flush()
         for (const evt of events) {
           if (evt.type === 'room-enter') {
@@ -583,6 +598,7 @@ export function mountGame(container) {
         asciiGrid.destroy()
       }
       asciiGrid = createAsciiGrid(state.map.width, state.map.height, 16)
+      asciiGrid.setRotatedCells(state.map.rotatedCells)
       asciiGrid.renderFullMap(state.map)
       mapVP.content.addChild(asciiGrid.container)
       mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)

@@ -206,7 +206,7 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
       row.cursor = 'pointer'
 
       const hasStatus = entry.color != null && entry.health != null
-      const rowH = hasStatus ? 54 : (entry.color != null ? 38 : 20)
+      const rowH = hasStatus ? 66 : (entry.color != null ? 48 : 20)
       const bg = new Graphics()
       row.addChild(bg)
 
@@ -245,6 +245,13 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
           addTextLine(`${entry.health}  ·  ${entry.mood}`, {
             fontFamily: 'monospace', fontSize: 9, fill: 0x556677,
           }, ROW_GAP * 2, inner)
+
+          const behaviorLine = entry.behaviorTarget
+            ? `${entry.behavior}  ·  ${entry.behaviorTarget}`
+            : entry.behavior
+          addTextLine(behaviorLine ?? 'Idle', {
+            fontFamily: 'NothingYouCouldDo', fontSize: 9, fill: 0x9eb0c2,
+          }, ROW_GAP * 3, inner)
         }
       } else {
         addTextLine(`${entry.name}  ·  ${entry.archetype}`, { ...TEXT_STYLE }, 0, inner)
@@ -302,6 +309,16 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
     })
     summaryLine.y = y
     base.contentContainer.addChild(summaryLine)
+    y += 20
+
+    const behaviorLine = new Text({
+      text: detail.behaviorTarget
+        ? `${detail.behavior}  ·  ${detail.behaviorTarget}`
+        : detail.behavior,
+      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xaebfd0 },
+    })
+    behaviorLine.y = y
+    base.contentContainer.addChild(behaviorLine)
     y += 20
 
     const quickNeeds = new Text({
@@ -406,6 +423,10 @@ export function buildCharacterTooltip() {
       new Text({
         text: `@ ${data.name}`,
         style: { fontFamily: 'monospace', fontSize: 12, fill: data.color ?? 0xdbe5f0 },
+      }),
+      new Text({
+        text: data.behavior ?? 'Idle',
+        style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xaebfd0 },
       }),
       ...data.topNeedCues.map((cue) => new Text({
         text: cue,

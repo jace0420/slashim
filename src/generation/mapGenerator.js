@@ -248,8 +248,9 @@ export function generateMap(templateId = 'manor', seed) {
 
   const { chars, colors, bgs } = buildDisplayGrids(grid)
 
-  // stamp prop glyphs on top of floor tiles in the display grids
-  stampProps(chars, colors, bgs, placedProps, propDefs)
+  // stamp prop glyphs on top of floor tiles in the display grids.
+  // rotated cells come back separately for canvas-level rotation at render time.
+  const rotatedCells = stampProps(chars, colors, bgs, placedProps, propDefs)
 
   return {
     width: mapW,
@@ -261,6 +262,8 @@ export function generateMap(templateId = 'manor', seed) {
     rooms: placedRooms,
     propMap,
     placedProps,
+    propDefs,
+    rotatedCells,
     seed: rng.seed,
   }
 }

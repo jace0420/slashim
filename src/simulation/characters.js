@@ -1,5 +1,17 @@
 import Chance from 'chance'
-import { Tile, inBounds, isWalkable } from '../generation/tileTypes.js'
+import { Tile } from '../generation/tileTypes.js'
+import {
+  buildOccupiedSet,
+  buildReservedRestSlotSet,
+  countOpenNeighbors,
+  findPath,
+  findRoomAt,
+  getOpenNeighborTiles,
+  getRestTargets,
+  getRoomLabel,
+  pickRoomTile,
+  pickTileNearCharacter,
+} from './worldQueries.js'
 
 // 12 distinct high-contrast colors that read well on a dark background.
 // order matters — first N get assigned to the cast, so front-load the most readable ones.
@@ -86,12 +98,34 @@ const TICK_DECAY = {
 // sanity has no passive base decay — only event-driven changes (plus social isolation penalty).
 const MINUTE_DECAY = {
   energy:  -0.15,
-  stamina: +0.20, // light recovery while characters are not sprinting
+  stamina: +0.05, // baseline recovery is slight; real rest should matter more
   hunger:  -0.10,
   thirst:  -0.12,
   boredom: +0.20, // boredom builds when nothing interesting happens
   sanity:   0.00, // base is 0; social isolation adds a penalty on top
 }
+
+const ROOM_MEMORY_LIMIT = 4
+
+const BEHAVIOR_LABELS = {
+  wandering: 'Wandering',
+  explore: 'Exploring',
+  rest: 'Resting',
+  social: 'Socializing',
+}
+
+const BEHAVIOR_STAY_BONUS = 8
+const BEHAVIOR_SWITCH_MARGIN = 12
+
+const BEHAVIOR_MOVE_MULTIPLIERS = {
+  wandering: 0.65,
+  explore: 1.15,
+  rest: 0.9,
+  social: 1.0,
+}
+
+const SOFT_STUCK_TICKS = 4
+const HARD_STUCK_TICKS = 9
 
 // build a jittered needs object for a fresh character
 function initNeeds(rng) {
@@ -223,48 +257,6 @@ function pickTalkLine(rng, topics, speakerName, listenerName) {
   return fillTopic(template, speakerName, listenerName)
 }
 
-// interaction probability by motive — CONTENT needs close proximity check done at call site
-const SOCIAL_CHANCE = { CONTENT: 0.10, SOCIAL: 0.40, LONELY: 0.80, ISOLATED: 1.00 }
-
-// try to have charA initiate a talk with a nearby eligible partner.
-// returns a { type: 'social-talk', text } event or null.
-function tryInitiateSocial(charA, characters, castEntry, topics, rng, currentMinute) {
-  // one initiation per character per in-game minute
-  if (charA.lastSocialMinute === currentMinute) return null
-
-  const motive = charA.socialMotive
-  const chance = SOCIAL_CHANCE[motive]
-
-  // find all eligible talk partners
-  let candidates = characters.filter(b => b !== charA && canTalk(charA, b))
-
-  // CONTENT characters only chat with someone very close (≤ 3 tiles)
-  if (motive === 'CONTENT') {
-    candidates = candidates.filter(b => chebyshev(charA, b) <= 3)
-  }
-
-  if (candidates.length === 0) return null
-
-  // probability roll
-  if (rng.floating({ min: 0, max: 1 }) > chance) return null
-
-  const charB = rng.pickone(candidates)
-  const dist   = chebyshev(charA, charB)
-  const verb   = talkVerb(dist)
-  const line   = pickTalkLine(rng, topics, charA.name, charB.name)
-
-  // social restoration — speaker scales with extraversion; listener gets a flat bump
-  const ext = castEntry?.personality?.extraversion ?? 3
-  charA.needs.social = Math.min(100, charA.needs.social + 8 + (ext - 1) * 1.75)
-  charB.needs.social = Math.min(100, charB.needs.social + 5)
-
-  // stamp both so neither initiates again this minute
-  charA.lastSocialMinute = currentMinute
-  charB.lastSocialMinute = currentMinute
-
-  return { type: 'social-talk', text: `${line} (${verb})` }
-}
-
 // apply per-minute passive decay to all slow-moving needs and fire social interactions.
 // returns an array of events (same pattern as tickCharacters).
 // cast is needed to read per-character extraversion for social decay scaling.
@@ -303,44 +295,590 @@ export function minuteTickCharacters(characters, cast = [], topics = [], current
     refreshDerivedStats(c)
   }
 
-  // social interaction pass — separate loop so all need decays are settled first
-  if (topics.length > 0 && rng) {
-    for (const c of characters) {
-      const castEntry = cast[c.castIndex]
-      const evt = tryInitiateSocial(c, characters, castEntry, topics, rng, currentMinute)
-      if (evt) events.push(evt)
-    }
-  }
-
   return events
 }
 
-// pick a random walkable FLOOR tile inside a room rect that isn't already occupied
-function randomFloorInRoom(room, mapData, occupied, rng) {
-  const candidates = []
-
-  for (let y = room.y; y < room.y + room.h; y++) {
-    for (let x = room.x; x < room.x + room.w; x++) {
-      if (mapData.tiles[y][x] === Tile.FLOOR && !occupied.has(`${x},${y}`)
-        && (mapData.propMap?.[y]?.[x] == null)) {
-        candidates.push({ x, y })
-      }
+function ensureBehaviorState(character) {
+  if (!character.behaviorCooldowns) {
+    character.behaviorCooldowns = {
+      socialUntilTick: 0,
+      exploreUntilTick: 0,
     }
   }
 
-  if (candidates.length === 0) return null
-  return rng.pickone(candidates)
+  if (!Array.isArray(character.recentRooms)) {
+    character.recentRooms = []
+  }
+
+  if (!character.behavior) {
+    character.behavior = {
+      key: 'wandering',
+      phase: 'idle',
+      startedTick: 0,
+      lockUntilTick: 0,
+      waitUntilTick: 0,
+      score: 0,
+      target: null,
+      targetLabel: null,
+      path: [],
+      blockedTicks: 0,
+      blockedByCastIndex: null,
+      complete: true,
+    }
+  }
 }
 
-// figure out which room (if any) a tile belongs to
-export function findRoomAt(x, y, rooms) {
-  for (let i = 0; i < rooms.length; i++) {
-    const r = rooms[i]
-    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
-      return i
+function pushRecentRoom(character, roomIndex) {
+  if (roomIndex == null || roomIndex < 0) return
+  character.recentRooms = [roomIndex, ...character.recentRooms.filter((value) => value !== roomIndex)]
+    .slice(0, ROOM_MEMORY_LIMIT)
+}
+
+function makeBehaviorEvent(character, key, targetLabel) {
+  return {
+    type: 'behavior-changed',
+    name: character.name,
+    behavior: BEHAVIOR_LABELS[key] ?? key,
+    targetLabel,
+  }
+}
+
+function getBehaviorSummary(character) {
+  const key = character.behavior?.key ?? 'wandering'
+  return BEHAVIOR_LABELS[key] ?? key
+}
+
+function clampNeed(key, delta, character) {
+  character.needs[key] = Math.max(0, Math.min(100, character.needs[key] + delta))
+}
+
+function getWaitRange(rng, min, max) {
+  return rng.integer({ min, max })
+}
+
+function getCurrentRoom(mapData, character) {
+  return character.roomIndex >= 0 ? mapData.rooms[character.roomIndex] ?? null : null
+}
+
+function chooseWanderTarget(character, mapData, occupied, rng) {
+  const room = getCurrentRoom(mapData, character)
+  if (!room) return { x: character.x, y: character.y, roomIndex: character.roomIndex, label: 'Hallway' }
+
+  const target = pickRoomTile(room, mapData, occupied, rng, { preferInterior: true })
+  if (!target) return null
+  return {
+    ...target,
+    roomIndex: character.roomIndex,
+    label: getRoomLabel(mapData, character.roomIndex),
+  }
+}
+
+function chooseExploreTarget(character, mapData, occupied, rng) {
+  const candidates = mapData.rooms
+    .map((room, index) => ({ room, index }))
+    .filter(({ index }) => index !== character.roomIndex)
+    .sort((a, b) => {
+      const aSeen = character.recentRooms.includes(a.index) ? 1 : 0
+      const bSeen = character.recentRooms.includes(b.index) ? 1 : 0
+      return aSeen - bSeen
+    })
+
+  for (const { room, index } of candidates) {
+    const target = pickRoomTile(room, mapData, occupied, rng, { preferInterior: true })
+    if (!target) continue
+    return {
+      ...target,
+      roomIndex: index,
+      label: getRoomLabel(mapData, index),
     }
   }
-  return -1
+
+  return null
+}
+
+function chooseFloorRestTarget(character, mapData, occupied, rng) {
+  const preferredRooms = mapData.rooms
+    .map((room, index) => ({ room, index }))
+    .sort((a, b) => {
+      const aWeight = a.index === character.roomIndex ? -2 : 0
+      const bWeight = b.index === character.roomIndex ? -2 : 0
+      const aBedroom = a.room.def?.type === 'bedroom' ? -1 : 0
+      const bBedroom = b.room.def?.type === 'bedroom' ? -1 : 0
+      return (aWeight + aBedroom) - (bWeight + bBedroom)
+    })
+
+  for (const { room, index } of preferredRooms) {
+    const target = pickRoomTile(room, mapData, occupied, rng, { preferInterior: true })
+    if (!target) continue
+    return {
+      ...target,
+      roomIndex: index,
+      label: `${getRoomLabel(mapData, index)} floor`,
+      comfort: 0.75,
+      posture: 'floor',
+      recoveryPerTick: 0.22,
+    }
+  }
+
+  return null
+}
+
+function chooseRestTarget(character, mapData, occupied, reservedSlotKeys, rng) {
+  const restTargets = getRestTargets(mapData, occupied, reservedSlotKeys)
+  let best = null
+  let bestScore = -Infinity
+
+  for (const target of restTargets) {
+    const path = findPath(mapData, character, target, occupied)
+    if (!path) continue
+    const roomWeight = mapData.rooms[target.roomIndex]?.def?.type === 'bedroom' ? 6 : 0
+    const score = target.comfort * 24 + roomWeight - path.length * 1.8
+    if (score > bestScore) {
+      bestScore = score
+      best = { ...target, path }
+    }
+  }
+
+  if (best) return best
+
+  const floorTarget = chooseFloorRestTarget(character, mapData, occupied, rng)
+  if (!floorTarget) return null
+
+  return {
+    ...floorTarget,
+    path: findPath(mapData, character, floorTarget, occupied) ?? [],
+  }
+}
+
+function chooseSocialPartner(character, characters) {
+  const candidates = characters.filter((other) => {
+    if (other === character) return false
+    if (other.behavior?.key === 'rest') return false
+    return true
+  })
+
+  if (candidates.length === 0) return null
+
+  candidates.sort((a, b) => {
+    const socialNeedDiff = a.needs.social - b.needs.social
+    if (socialNeedDiff !== 0) return socialNeedDiff
+    return Math.abs(a.x - character.x) + Math.abs(a.y - character.y)
+      - (Math.abs(b.x - character.x) + Math.abs(b.y - character.y))
+  })
+
+  return candidates[0]
+}
+
+function shouldKeepBehavior(character, best, currentScore, tickIndex) {
+  if (!best) return false
+  if (best.key === character.behavior.key) return true
+  if (tickIndex < character.behavior.lockUntilTick && character.needs.stamina > 20) return true
+  return best.score <= currentScore + BEHAVIOR_SWITCH_MARGIN
+}
+
+function scoreBehaviors(character, characters, mapData, tickIndex) {
+  const boredom = character.needs.boredom
+  const lowStamina = 100 - character.needs.stamina
+  const lowSocial = 100 - character.needs.social
+
+  const scores = {
+    wandering: 18 + Math.max(0, 30 - boredom * 0.2),
+    explore: mapData.rooms.length > 1 ? boredom * 0.92 + character.recentRooms.length * 1.5 : -Infinity,
+    rest: lowStamina * 1.45 + (100 - character.needs.energy) * 0.45,
+    social: characters.length > 1 ? lowSocial * 1.25 + boredom * 0.35 : -Infinity,
+  }
+
+  if (tickIndex < character.behaviorCooldowns.socialUntilTick) {
+    scores.social = -Infinity
+  }
+
+  if (tickIndex < character.behaviorCooldowns.exploreUntilTick) {
+    scores.explore -= 14
+  }
+
+  if (character.behavior?.key) {
+    scores[character.behavior.key] = (scores[character.behavior.key] ?? 0) + BEHAVIOR_STAY_BONUS
+  }
+
+  return scores
+}
+
+function moveCharacter(character, dest, mapData, asciiGrid, occupied, events) {
+  const prevChar = mapData.chars[character.y][character.x]
+  const prevColor = mapData.colors[character.y][character.x]
+  const prevBg = mapData.bgs?.[character.y]?.[character.x]
+  asciiGrid.updateTile(character.x, character.y, prevChar, prevColor, prevBg)
+  occupied.delete(`${character.x},${character.y}`)
+
+  character.x = dest.x
+  character.y = dest.y
+  occupied.add(`${character.x},${character.y}`)
+
+  const destBg = mapData.bgs?.[character.y]?.[character.x] ?? 0x000000
+  asciiGrid.updateTile(character.x, character.y, character.glyph, character.color, destBg)
+
+  const newRoom = findRoomAt(character.x, character.y, mapData.rooms)
+  if (newRoom !== character.roomIndex) {
+    if (newRoom !== -1) {
+      events.push({ type: 'room-enter', name: character.name, room: getRoomLabel(mapData, newRoom) })
+      pushRecentRoom(character, newRoom)
+    }
+    character.roomIndex = newRoom
+  }
+}
+
+function isAtTarget(character) {
+  const target = character.behavior?.target
+  if (!target) return true
+  if (target.x == null || target.y == null) return true
+  return character.x === target.x && character.y === target.y
+}
+
+function clearBlockedState(character) {
+  character.behavior.blockedTicks = 0
+  character.behavior.blockedByCastIndex = null
+}
+
+function rebuildPathToCurrentTarget(character, context) {
+  if (!character.behavior?.target) return false
+  if (isAtTarget(character)) return true
+
+  const path = findPath(context.mapData, character, character.behavior.target, context.occupied) ?? []
+  character.behavior.path = path
+  return path.length > 0
+}
+
+function isReciprocalBlock(character, blocker) {
+  const blockerNext = blocker?.behavior?.path?.[0]
+  return blockerNext?.x === character.x && blockerNext?.y === character.y
+}
+
+function isRestrictedTile(mapData, tile, occupied, current, blocker) {
+  const occupiedForShape = new Set(occupied)
+  occupiedForShape.delete(`${current.x},${current.y}`)
+  if (blocker) occupiedForShape.delete(`${blocker.x},${blocker.y}`)
+  return countOpenNeighbors(mapData, tile.x, tile.y, occupiedForShape) <= 2
+}
+
+function chooseYieldTile(character, blocker, context) {
+  const nextStep = character.behavior.path[0]
+  const candidates = getOpenNeighborTiles(context.mapData, character.x, character.y, context.occupied)
+    .filter((tile) => !(nextStep && tile.x === nextStep.x && tile.y === nextStep.y))
+
+  if (candidates.length === 0) return null
+
+  const blockerNext = blocker?.behavior?.path?.[0]
+  const scored = candidates.map((tile) => {
+    const branchiness = countOpenNeighbors(context.mapData, tile.x, tile.y, context.occupied)
+    const roomBonus = findRoomAt(tile.x, tile.y, context.mapData.rooms) >= 0 ? 2 : 0
+    const blockerPenalty = blockerNext && tile.x === blockerNext.x && tile.y === blockerNext.y ? 6 : 0
+    const retreatBias = blocker ? Math.abs(tile.x - blocker.x) + Math.abs(tile.y - blocker.y) : 0
+    return {
+      tile,
+      score: branchiness * 5 + roomBonus + retreatBias - blockerPenalty,
+    }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0]?.tile ?? null
+}
+
+function shouldYield(character, blocker, context) {
+  if (!blocker) return false
+  if (!isReciprocalBlock(character, blocker)) return false
+  const restricted = isRestrictedTile(context.mapData, character, context.occupied, character, blocker)
+    && isRestrictedTile(context.mapData, blocker, context.occupied, character, blocker)
+  if (!restricted) return false
+
+  const characterPriority = (character.behavior.target?.comfort ?? 0) + character.behavior.score
+  const blockerPriority = (blocker.behavior?.target?.comfort ?? 0) + (blocker.behavior?.score ?? 0)
+  if (characterPriority !== blockerPriority) return characterPriority < blockerPriority
+  return character.castIndex > blocker.castIndex
+}
+
+function applyBlockedFallback(character, context) {
+  if (character.behavior.key === 'explore') {
+    character.behaviorCooldowns.exploreUntilTick = context.tickIndex + 24
+  }
+
+  if (character.behavior.key === 'social') {
+    character.behaviorCooldowns.socialUntilTick = context.tickIndex + 18
+  }
+
+  character.behavior.complete = true
+  character.behavior.path = []
+  character.behavior.target = null
+  character.behavior.targetLabel = null
+  clearBlockedState(character)
+}
+
+function resolveBlockedMovement(character, blocker, context) {
+  const canYield = character.behavior.blockedTicks >= SOFT_STUCK_TICKS && shouldYield(character, blocker, context)
+  if (canYield) {
+    const yieldTile = chooseYieldTile(character, blocker, context)
+    if (yieldTile) {
+      character.behavior.phase = 'yielding'
+      character.behavior.path = [yieldTile]
+      character.behavior.blockedTicks = 0
+      character.behavior.blockedByCastIndex = null
+      return
+    }
+  }
+
+  if (character.behavior.blockedTicks >= SOFT_STUCK_TICKS) {
+    const rebuilt = rebuildPathToCurrentTarget(character, context)
+    if (rebuilt) {
+      character.behavior.phase = 'moving'
+      character.behavior.blockedTicks = Math.max(0, character.behavior.blockedTicks - 2)
+      character.behavior.blockedByCastIndex = blocker?.castIndex ?? null
+      return
+    }
+  }
+
+  if (character.behavior.blockedTicks >= HARD_STUCK_TICKS) {
+    applyBlockedFallback(character, context)
+  }
+}
+
+function stepAlongPath(character, context) {
+  const { occupied, mapData, asciiGrid, events, moveChance, rng } = context
+  if (!character.behavior.path || character.behavior.path.length === 0) return true
+
+  const moveRoll = rng.floating({ min: 0, max: 1 })
+  const moveBudget = Math.min(1, moveChance * (BEHAVIOR_MOVE_MULTIPLIERS[character.behavior.key] ?? 1))
+  if (moveRoll > moveBudget) return false
+
+  const nextStep = character.behavior.path[0]
+  const blocker = context.characters.find((candidate) => candidate.x === nextStep.x && candidate.y === nextStep.y) ?? null
+  if (blocker) {
+    character.behavior.blockedTicks += 1
+    character.behavior.blockedByCastIndex = blocker.castIndex
+    resolveBlockedMovement(character, blocker, context)
+    return false
+  }
+
+  moveCharacter(character, nextStep, mapData, asciiGrid, occupied, events)
+  character.behavior.path.shift()
+  clearBlockedState(character)
+  return character.behavior.path.length === 0
+}
+
+function setBehavior(character, key, tickIndex, target = null, score = 0) {
+  character.behavior = {
+    key,
+    phase: 'moving',
+    startedTick: tickIndex,
+    lockUntilTick: tickIndex + 6,
+    waitUntilTick: tickIndex,
+    score,
+    target,
+    targetLabel: target?.label ?? null,
+    path: target?.path ? [...target.path] : [],
+    blockedTicks: 0,
+    blockedByCastIndex: null,
+    complete: false,
+  }
+}
+
+function enterBehavior(character, key, context, score) {
+  const { mapData, occupied, reservedSlotKeys, rng, characters, tickIndex } = context
+
+  if (key === 'wandering') {
+    const target = chooseWanderTarget(character, mapData, occupied, rng)
+    setBehavior(character, key, tickIndex, {
+      ...target,
+      path: target ? findPath(mapData, character, target, occupied) ?? [] : [],
+    }, score)
+    character.behavior.waitUntilTick = tickIndex + getWaitRange(rng, 8, 24)
+  } else if (key === 'explore') {
+    const target = chooseExploreTarget(character, mapData, occupied, rng)
+    if (!target) return enterBehavior(character, 'wandering', context, score)
+    setBehavior(character, key, tickIndex, {
+      ...target,
+      path: findPath(mapData, character, target, occupied) ?? [],
+    }, score)
+    character.behavior.waitUntilTick = tickIndex + getWaitRange(rng, 4, 10)
+    character.behaviorCooldowns.exploreUntilTick = tickIndex + 18
+  } else if (key === 'rest') {
+    const target = chooseRestTarget(character, mapData, occupied, reservedSlotKeys, rng)
+    if (!target) return enterBehavior(character, 'wandering', context, score)
+    setBehavior(character, key, tickIndex, target, score)
+    character.behavior.phase = character.behavior.path.length > 0 ? 'moving' : 'resting'
+    character.behavior.waitUntilTick = tickIndex + getWaitRange(rng, 14, 32)
+  } else if (key === 'social') {
+    const partner = chooseSocialPartner(character, characters)
+    if (!partner) return enterBehavior(character, 'wandering', context, score)
+    const nearTile = pickTileNearCharacter(partner, mapData, occupied, rng, 2)
+    const target = {
+      type: 'social',
+      partnerCastIndex: partner.castIndex,
+      label: partner.name,
+      path: nearTile ? (findPath(mapData, character, nearTile, occupied) ?? []) : [],
+      x: nearTile?.x ?? character.x,
+      y: nearTile?.y ?? character.y,
+    }
+    setBehavior(character, key, tickIndex, target, score)
+    character.behavior.waitUntilTick = tickIndex + getWaitRange(rng, 10, 22)
+  }
+}
+
+function maybeChooseBehavior(character, context) {
+  const scores = scoreBehaviors(character, context.characters, context.mapData, context.tickIndex)
+  const currentScore = scores[character.behavior.key] ?? -Infinity
+  const best = Object.entries(scores)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, score]) => ({ key, score }))
+    [0]
+
+  if (shouldKeepBehavior(character, best, currentScore, context.tickIndex) && !character.behavior.complete) {
+    return null
+  }
+
+  enterBehavior(character, best.key, context, best.score)
+  return makeBehaviorEvent(character, best.key, character.behavior.targetLabel)
+}
+
+function beginConversation(character, partner, context) {
+  const { rng, topics, tickIndex, events } = context
+  const duration = getWaitRange(rng, 8, 18)
+  const dist = chebyshev(character, partner)
+  const verb = talkVerb(dist)
+  const line = topics.length > 0
+    ? pickTalkLine(rng, topics, character.name, partner.name)
+    : `${character.name} talks to ${partner.name}`
+
+  character.behavior.phase = 'talking'
+  character.behavior.waitUntilTick = tickIndex + duration
+  character.behavior.targetLabel = partner.name
+  character.behavior.target = {
+    type: 'social',
+    partnerCastIndex: partner.castIndex,
+    label: partner.name,
+  }
+
+  if (partner.behavior?.key !== 'rest') {
+    partner.behavior = {
+      key: 'social',
+      phase: 'talking',
+      startedTick: tickIndex,
+      lockUntilTick: tickIndex + duration,
+      waitUntilTick: tickIndex + duration,
+      score: character.behavior.score,
+      target: { type: 'social', partnerCastIndex: character.castIndex, label: character.name },
+      targetLabel: character.name,
+      path: [],
+      complete: false,
+    }
+  }
+
+  events.push({ type: 'social-talk', text: `${line} (${verb})` })
+}
+
+function tickWandering(character, context) {
+  if (character.behavior.path.length === 0 && !isAtTarget(character)) {
+    rebuildPathToCurrentTarget(character, context)
+  }
+
+  if (character.behavior.path.length > 0) {
+    stepAlongPath(character, context)
+    return
+  }
+
+  character.behavior.phase = 'idle'
+  if (context.tickIndex >= character.behavior.waitUntilTick) {
+    character.behavior.complete = true
+  }
+}
+
+function tickExplore(character, context) {
+  if (character.behavior.path.length === 0 && !isAtTarget(character)) {
+    rebuildPathToCurrentTarget(character, context)
+  }
+
+  if (character.behavior.path.length > 0) {
+    stepAlongPath(character, context)
+    return
+  }
+
+  character.behavior.phase = 'idle'
+  if (context.tickIndex >= character.behavior.waitUntilTick) {
+    character.behavior.complete = true
+  }
+}
+
+function tickRest(character, context) {
+  if (character.behavior.phase === 'yielding' && character.behavior.path.length === 0 && !isAtTarget(character)) {
+    character.behavior.phase = 'moving'
+    rebuildPathToCurrentTarget(character, context)
+  }
+
+  if (character.behavior.phase === 'moving' && character.behavior.path.length === 0 && !isAtTarget(character)) {
+    rebuildPathToCurrentTarget(character, context)
+  }
+
+  if (character.behavior.phase === 'moving' && character.behavior.path.length > 0) {
+    const arrived = stepAlongPath(character, context)
+    if (arrived) character.behavior.phase = 'resting'
+    return
+  }
+
+  character.behavior.phase = 'resting'
+  clampNeed('stamina', character.behavior.target?.recoveryPerTick ?? 0.22, character)
+  clampNeed('energy', 0.04, character)
+  clampNeed('boredom', -0.08, character)
+
+  if (character.needs.stamina >= 92 && context.tickIndex >= character.behavior.waitUntilTick) {
+    character.behavior.complete = true
+  }
+}
+
+function tickSocial(character, context) {
+  const partner = context.characters.find((candidate) => candidate.castIndex === character.behavior.target?.partnerCastIndex)
+  if (!partner) {
+    character.behavior.complete = true
+    return
+  }
+
+  if (character.behavior.phase === 'talking') {
+    clampNeed('social', 0.38, character)
+    clampNeed('boredom', -0.16, character)
+    clampNeed('sanity', 0.03, character)
+    if (context.tickIndex >= character.behavior.waitUntilTick) {
+      character.behaviorCooldowns.socialUntilTick = context.tickIndex + 18
+      character.behavior.complete = true
+    }
+    return
+  }
+
+  if (canTalk(character, partner) && chebyshev(character, partner) <= 2) {
+    beginConversation(character, partner, context)
+    return
+  }
+
+  if (character.behavior.phase === 'yielding' && character.behavior.path.length === 0) {
+    character.behavior.phase = 'moving'
+  }
+
+  if (context.tickIndex % 4 === 0 || character.behavior.path.length === 0) {
+    const retarget = pickTileNearCharacter(partner, context.mapData, context.occupied, context.rng, 2)
+    if (retarget) {
+      character.behavior.path = findPath(context.mapData, character, retarget, context.occupied) ?? []
+    }
+  }
+
+  if (character.behavior.path.length > 0) {
+    stepAlongPath(character, context)
+    return
+  }
+
+  character.behavior.complete = true
+}
+
+function tickBehavior(character, context) {
+  if (character.behavior.key === 'wandering') tickWandering(character, context)
+  else if (character.behavior.key === 'explore') tickExplore(character, context)
+  else if (character.behavior.key === 'rest') tickRest(character, context)
+  else if (character.behavior.key === 'social') tickSocial(character, context)
 }
 
 // spawn all cast members onto the map with unique colors and positions.
@@ -361,7 +899,7 @@ export function initCharacters(cast, mapData, seed) {
     const roomIndex = roomIndices[i % roomIndices.length]
     const room = mapData.rooms[roomIndex]
 
-    const pos = randomFloorInRoom(room, mapData, occupied, rng)
+    const pos = pickRoomTile(room, mapData, occupied, rng, { preferInterior: true })
     if (!pos) {
       // shouldn't happen unless rooms are tiny and packed — skip this character
       console.warn(`[characters] couldn't place ${cast[i].name} in room ${roomIndex}`)
@@ -383,8 +921,12 @@ export function initCharacters(cast, mapData, seed) {
       health: 'FINE',
       mood: deriveMood({ needs }),
       socialMotive: deriveSocialMotive(needs.social),
+      behavior: null,
+      behaviorCooldowns: null,
+      recentRooms: [roomIndex],
       lastSocialMinute: -1,
     }
+    ensureBehaviorState(character)
     characters.push(character)
   }
 
@@ -399,92 +941,44 @@ export function renderCharacters(characters, asciiGrid, mapData) {
   }
 }
 
-// build a set of occupied positions for quick lookup
-function buildOccupiedSet(characters) {
-  const set = new Set()
-  for (const c of characters) {
-    set.add(`${c.x},${c.y}`)
-  }
-  return set
-}
-
 // process one simulation tick — each character may move one tile.
-// returns an array of narrative events (room transitions) that happened this tick.
-export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance) {
+// returns an array of narrative events that happened this tick.
+export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, tickIndex = 0, topics = []) {
   const events = []
   const occupied = buildOccupiedSet(characters)
 
   for (const c of characters) {
     // apply per-tick need decay (fear, adrenaline) regardless of movement
     tickCharacterNeeds(c)
+    ensureBehaviorState(c)
 
-    // TODO: factor in personality, fear, adrenaline, movement speed, status effects
-    if (rng.floating({ min: 0, max: 1 }) > moveChance) continue
-
-    // collect valid neighbors
-    const options = []
-    for (const [dx, dy] of DIRS) {
-      const nx = c.x + dx
-      const ny = c.y + dy
-      if (!inBounds(mapData.tiles, nx, ny)) continue
-      if (!isWalkable(mapData.tiles[ny][nx])) continue
-      if (mapData.propMap?.[ny]?.[nx] !== null && mapData.propMap?.[ny]?.[nx] !== undefined) continue
-      if (occupied.has(`${nx},${ny}`)) continue
-      options.push({ x: nx, y: ny })
+    const context = {
+      tickIndex,
+      topics,
+      characters,
+      mapData,
+      asciiGrid,
+      rng,
+      moveChance,
+      occupied,
+      events,
+      reservedSlotKeys: buildReservedRestSlotSet(characters, c.castIndex),
     }
 
-    if (options.length === 0) continue
+    const behaviorEvent = maybeChooseBehavior(c, context)
+    if (behaviorEvent) events.push(behaviorEvent)
 
-    // LONELY/ISOLATED characters bias their step toward the nearest other character (greedy, no pathfinding).
-    // if multiple options reduce distance equally, one is picked at random from those; otherwise falls back to random.
-    let dest
-    if (c.socialMotive === 'LONELY' || c.socialMotive === 'ISOLATED') {
-      const others = characters.filter(o => o !== c)
-      if (others.length > 0) {
-        // find the nearest other character by Manhattan distance
-        let nearest = others[0]
-        let nearestDist = Math.abs(nearest.x - c.x) + Math.abs(nearest.y - c.y)
-        for (let oi = 1; oi < others.length; oi++) {
-          const d = Math.abs(others[oi].x - c.x) + Math.abs(others[oi].y - c.y)
-          if (d < nearestDist) { nearest = others[oi]; nearestDist = d }
-        }
-        // prefer options that bring us closer
-        const closer = options.filter(o =>
-          Math.abs(o.x - nearest.x) + Math.abs(o.y - nearest.y) < nearestDist
-        )
-        dest = closer.length > 0 ? rng.pickone(closer) : rng.pickone(options)
-      } else {
-        dest = rng.pickone(options)
-      }
-    } else {
-      // TODO: pathfinding, room-seeking behavior, personality-driven direction bias, flee/chase AI
-      dest = rng.pickone(options)
-    }
-
-    // restore the base tile where we were standing
-    const prevChar = mapData.chars[c.y][c.x]
-    const prevColor = mapData.colors[c.y][c.x]
-    const prevBg = mapData.bgs?.[c.y]?.[c.x]
-    asciiGrid.updateTile(c.x, c.y, prevChar, prevColor, prevBg)
-    occupied.delete(`${c.x},${c.y}`)
-
-    // move
-    c.x = dest.x
-    c.y = dest.y
-    occupied.add(`${c.x},${c.y}`)
-
-    // render character at new position with the tile's bg color
-    const destBg = mapData.bgs?.[c.y]?.[c.x] ?? 0x000000
-    asciiGrid.updateTile(c.x, c.y, c.glyph, c.color, destBg)
-
-    // check for room transition
-    const newRoom = findRoomAt(c.x, c.y, mapData.rooms)
-    if (newRoom !== -1 && newRoom !== c.roomIndex) {
-      const roomLabel = mapData.rooms[newRoom].def?.label || `Room ${newRoom}`
-      events.push({ type: 'room-enter', name: c.name, room: roomLabel })
-      c.roomIndex = newRoom
-    }
+    tickBehavior(c, context)
+    refreshDerivedStats(c)
   }
 
   return events
+}
+
+export function getCharacterBehaviorSummary(character) {
+  return getBehaviorSummary(character)
+}
+
+export function getCharacterBehaviorTarget(character) {
+  return character.behavior?.targetLabel ?? null
 }
