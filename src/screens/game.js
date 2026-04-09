@@ -11,6 +11,8 @@ import { buildClockWidget } from '../ui/clockWidget'
 import { computeLayout, DEFAULT_HUD_PARAMS } from '../ui/hudLayout'
 import { createMapViewport } from '../ui/mapViewport'
 import { createTabStrip } from '../ui/tabStrip'
+import { buildEventLogPanel } from '../ui/eventLogPanel'
+import { createEventLog } from '../store/eventLog'
 import { generateMap, debugPrintMap } from '../generation/mapGenerator'
 import { state } from '../store/gameState'
 import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFAULT_CLOCK_PARAMS } from '../simulation/clock'
@@ -69,6 +71,9 @@ export function mountGame(container) {
   let simPane = null
   let needsPane = null
   let uiPane = null
+  let eventLogPane = null
+  let logPanel = null
+  let logUnsub = null
   let sceneContainer = null
   let panels = {}
   let asciiGrid = null
@@ -92,7 +97,11 @@ export function mountGame(container) {
   const panelParams = {
     cast:     { x: 0, y: 0, w: 220, h: 600 },
     clockHud: { x: 0, y: 0, radius: 28 },
+    eventLog: { x: 0, y: 0, w: 0, h: 0 },
   }
+
+  // canvas-space bounds of the tab strip — used by the wheel handler for scroll hit-testing
+  const tabStripBounds = { x: 0, y: 0, w: 0, h: 0 }
 
   // computes layout from current viewport size and applies it to all panel params
   function applyLayout() {
@@ -120,6 +129,14 @@ export function mountGame(container) {
 
     // resize tab strip
     tabStrip?.resize(layout.tabStrip)
+
+    // event log panel bounds — fills the tab strip content area
+    Object.assign(tabStripBounds, layout.tabStrip)
+    Object.assign(panelParams.eventLog, {
+      w: layout.tabStrip.w - 16,
+      h: layout.tabStrip.h - 28 - 8,
+    })
+    logPanel?.resize()
 
     // redraw all panels
     panels.cast?.redraw()
@@ -493,7 +510,10 @@ export function mountGame(container) {
     // clock handle — starts paused
     clockHandle = createClock(state.clock, clockParams, {
       onTick: (tickIndex, _minuteAdvanced) => {
-        tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast)
+        const tickEvents = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast)
+        if (state.eventLog) {
+          for (const e of tickEvents) state.eventLog.push(e, state.clock)
+        }
         asciiGrid.flush()
         charIconLayer?.update(state.characters)
         refreshCharacterInspectionUI()
@@ -519,6 +539,17 @@ export function mountGame(container) {
     })
     locationContent.addChild(locText)
     tabStrip.addTab('locations', 'LOCATIONS', locationContent)
+
+    // event log tab
+    state.eventLog = createEventLog(500)
+    Object.assign(tabStripBounds, layout.tabStrip)
+    Object.assign(panelParams.eventLog, {
+      w: layout.tabStrip.w - 16,
+      h: layout.tabStrip.h - 28 - 8,
+    })
+    logPanel = buildEventLogPanel(panelParams.eventLog, state.eventLog)
+    tabStrip.addTab('log', 'EVENT LOG', logPanel.container)
+    logUnsub = state.eventLog.subscribe((entry, purged) => logPanel.onNewEntry(entry, purged))
 
     sceneContainer.addChild(tabStrip.container)
 
@@ -550,6 +581,21 @@ export function mountGame(container) {
           return
         }
       }
+
+      // event log scroll — cursor anywhere in the tab strip content area
+      if (logPanel?.container.visible) {
+        const TAB_LABEL_H = 28
+        if (
+          cx >= tabStripBounds.x &&
+          cx <= tabStripBounds.x + tabStripBounds.w &&
+          cy >= tabStripBounds.y + TAB_LABEL_H &&
+          cy <= tabStripBounds.y + tabStripBounds.h
+        ) {
+          logPanel.scroll(e.deltaY * 0.5)
+          e.preventDefault()
+          return
+        }
+      }
     }
     pixiApp.canvas.addEventListener('wheel', wheelHandler, { passive: false })
 
@@ -559,6 +605,17 @@ export function mountGame(container) {
   }
 
   function setupTweakPane() {
+    // event log debug controls
+    eventLogPane = new Pane({ title: 'Event Log' })
+    const logStats = { count: 0 }
+    eventLogPane.addBinding(logStats, 'count', { readonly: true, label: 'entries' })
+    eventLogPane.addButton({ title: 'Clear Log' }).on('click', () => state.eventLog?.clear())
+    pixiApp.ticker.add(() => {
+      if (!state.eventLog) return
+      logStats.count = state.eventLog.entries.length
+      eventLogPane.refresh()
+    })
+
     // HUD layout tuning
     uiPane = new Pane({ title: 'HUD Layout' })
     uiPane.addBinding(hudParams, 'sidebarW',  { min: 140, max: 400, step: 1, label: 'sidebar W'   }).on('change', applyLayout)
@@ -632,7 +689,8 @@ export function mountGame(container) {
 
     simPane.addButton({ title: 'Advance 1 Tick' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
-      tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+      const e1 = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+      if (state.eventLog) for (const e of e1) state.eventLog.push(e, state.clock)
       asciiGrid.flush()
       charIconLayer?.update(state.characters)
       refreshCharacterInspectionUI()
@@ -641,7 +699,8 @@ export function mountGame(container) {
     simPane.addButton({ title: 'Advance 1 Minute' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
       for (let t = 0; t < clockParams.ticksPerMinute; t++) {
-        tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+        const e1 = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+        if (state.eventLog) for (const e of e1) state.eventLog.push(e, state.clock)
       }
       asciiGrid.flush()
       charIconLayer?.update(state.characters)
@@ -674,11 +733,14 @@ export function mountGame(container) {
     charIconLayer?.destroy()
     mapVP?.destroy()
     tabStrip?.destroy()
+    logUnsub?.()
+    logUnsub = null
     pane?.dispose()
     uiPane?.dispose()
     mapPane?.dispose()
     simPane?.dispose()
     needsPane?.dispose()
+    eventLogPane?.dispose()
 
     if (pixiApp) {
       pixiApp.destroy(true, { children: true, texture: false })
