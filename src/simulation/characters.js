@@ -112,6 +112,7 @@ const BEHAVIOR_LABELS = {
   explore: 'Exploring',
   rest: 'Resting',
   social: 'Socializing',
+  conversing: 'Conversing',
 }
 
 const BEHAVIOR_STAY_BONUS = 8
@@ -344,6 +345,8 @@ function makeBehaviorEvent(character, key, targetLabel) {
 }
 
 function getBehaviorSummary(character) {
+  const phase = character.behavior?.phase
+  if (phase === 'conversing') return BEHAVIOR_LABELS.conversing
   const key = character.behavior?.key ?? 'wandering'
   return BEHAVIOR_LABELS[key] ?? key
 }
@@ -738,16 +741,32 @@ function maybeChooseBehavior(character, context) {
   return makeBehaviorEvent(character, best.key, character.behavior.targetLabel)
 }
 
+// pick an opening topic, set up the conversation object on both parties, emit the begin event
 function beginConversation(character, partner, context) {
-  const { rng, topics, tickIndex, events } = context
-  const duration = getWaitRange(rng, 8, 18)
+  const { rng, topics, beats, cast, tickIndex, events } = context
+  const castEntry = cast[character.castIndex]
+  const extraversion = castEntry?.personality?.extraversion ?? 3
+  const duration = Math.round(rng.integer({ min: 30, max: 65 }) * (extraversion / 3))
+  const beatInterval = rng.integer({ min: 15, max: 25 })
+
   const dist = chebyshev(character, partner)
   const verb = talkVerb(dist)
-  const line = topics.length > 0
-    ? pickTalkLine(rng, topics, character.name, partner.name)
+  const openerPool = topics.length > 0 ? topics : null
+  const openingTopic = openerPool
+    ? pickTalkLine(rng, openerPool, character.name, partner.name)
     : `${character.name} talks to ${partner.name}`
 
-  character.behavior.phase = 'talking'
+  const conversationObj = {
+    partnerCastIndex: partner.castIndex,
+    startedTick: tickIndex,
+    currentTopic: openingTopic,
+    lastBeatTick: tickIndex,
+    beatInterval,
+    beatCount: 0,
+  }
+
+  character.conversation = conversationObj
+  character.behavior.phase = 'conversing'
   character.behavior.waitUntilTick = tickIndex + duration
   character.behavior.targetLabel = partner.name
   character.behavior.target = {
@@ -757,9 +776,13 @@ function beginConversation(character, partner, context) {
   }
 
   if (partner.behavior?.key !== 'rest') {
+    partner.conversation = {
+      ...conversationObj,
+      partnerCastIndex: character.castIndex,
+    }
     partner.behavior = {
       key: 'social',
-      phase: 'talking',
+      phase: 'conversing',
       startedTick: tickIndex,
       lockUntilTick: tickIndex + duration,
       waitUntilTick: tickIndex + duration,
@@ -771,7 +794,7 @@ function beginConversation(character, partner, context) {
     }
   }
 
-  events.push({ type: 'social-talk', text: `${line} (${verb})` })
+  events.push({ type: 'social-begin', text: `${openingTopic} (${verb})` })
 }
 
 function tickWandering(character, context) {
@@ -832,20 +855,80 @@ function tickRest(character, context) {
   }
 }
 
+function endConversation(character, partner) {
+  character.conversation = null
+  character.behavior.complete = true
+  if (partner && partner.behavior?.phase === 'conversing') {
+    partner.conversation = null
+    partner.behavior.complete = true
+  }
+}
+
 function tickSocial(character, context) {
-  const partner = context.characters.find((candidate) => candidate.castIndex === character.behavior.target?.partnerCastIndex)
+  const { tickIndex, rng, topics, beats, events, characters } = context
+  const partner = characters.find((candidate) => candidate.castIndex === character.behavior.target?.partnerCastIndex)
+
   if (!partner) {
+    character.conversation = null
     character.behavior.complete = true
     return
   }
 
-  if (character.behavior.phase === 'talking') {
+  if (character.behavior.phase === 'conversing') {
+    // passive needs recovery while talking
     clampNeed('social', 0.38, character)
     clampNeed('boredom', -0.16, character)
     clampNeed('sanity', 0.03, character)
-    if (context.tickIndex >= character.behavior.waitUntilTick) {
-      character.behaviorCooldowns.socialUntilTick = context.tickIndex + 18
-      character.behavior.complete = true
+
+    // partner drifted out of range — interrupted
+    if (!canTalk(character, partner) || chebyshev(character, partner) > 6) {
+      endConversation(character, partner)
+      return
+    }
+
+    // partner is no longer pointing back at this character — interrupted
+    const partnerStillHere = partner.behavior?.phase === 'conversing'
+      && partner.behavior?.target?.partnerCastIndex === character.castIndex
+    if (!partnerStillHere) {
+      endConversation(character, partner)
+      return
+    }
+
+    // satisfied early-exit: social is full enough and lock has expired
+    const lockExpired = tickIndex >= character.behavior.lockUntilTick + 15
+    if (character.needs.social >= 88 && lockExpired) {
+      endConversation(character, partner)
+      character.behaviorCooldowns.socialUntilTick = tickIndex + 18
+      return
+    }
+
+    // natural time limit
+    if (tickIndex >= character.behavior.waitUntilTick) {
+      endConversation(character, partner)
+      character.behaviorCooldowns.socialUntilTick = tickIndex + 18
+      return
+    }
+
+    // beat: emit a new topic or flavor line every beatInterval ticks
+    const conv = character.conversation
+    if (conv && tickIndex - conv.lastBeatTick >= conv.beatInterval) {
+      const useFlavorBeat = beats.length > 0 && rng.bool({ likelihood: 40 })
+      const pool = useFlavorBeat ? beats : topics
+      if (pool.length > 0) {
+        const beatText = pickTalkLine(rng, pool, character.name, partner.name)
+        conv.currentTopic = beatText
+        conv.lastBeatTick = tickIndex
+        conv.beatCount += 1
+        conv.beatInterval = rng.integer({ min: 15, max: 25 })
+        // mirror onto partner so their tooltip stays in sync
+        if (partner.conversation) {
+          partner.conversation.currentTopic = beatText
+          partner.conversation.lastBeatTick = tickIndex
+          partner.conversation.beatCount = conv.beatCount
+          partner.conversation.beatInterval = conv.beatInterval
+        }
+        events.push({ type: 'social-topic-beat', text: beatText })
+      }
     }
     return
   }
@@ -859,8 +942,8 @@ function tickSocial(character, context) {
     character.behavior.phase = 'moving'
   }
 
-  if (context.tickIndex % 4 === 0 || character.behavior.path.length === 0) {
-    const retarget = pickTileNearCharacter(partner, context.mapData, context.occupied, context.rng, 2)
+  if (tickIndex % 4 === 0 || character.behavior.path.length === 0) {
+    const retarget = pickTileNearCharacter(partner, context.mapData, context.occupied, rng, 2)
     if (retarget) {
       character.behavior.path = findPath(context.mapData, character, retarget, context.occupied) ?? []
     }
@@ -943,7 +1026,7 @@ export function renderCharacters(characters, asciiGrid, mapData) {
 
 // process one simulation tick — each character may move one tile.
 // returns an array of narrative events that happened this tick.
-export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, tickIndex = 0, topics = []) {
+export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, tickIndex = 0, topics = [], beats = [], cast = []) {
   const events = []
   const occupied = buildOccupiedSet(characters)
 
@@ -955,6 +1038,8 @@ export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, 
     const context = {
       tickIndex,
       topics,
+      beats,
+      cast,
       characters,
       mapData,
       asciiGrid,
@@ -981,4 +1066,8 @@ export function getCharacterBehaviorSummary(character) {
 
 export function getCharacterBehaviorTarget(character) {
   return character.behavior?.targetLabel ?? null
+}
+
+export function getCharacterConversationTopic(character) {
+  return character.conversation?.currentTopic ?? null
 }

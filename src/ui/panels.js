@@ -321,6 +321,16 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
     base.contentContainer.addChild(behaviorLine)
     y += 20
 
+    if (detail.conversationTopic) {
+      const topicLine = new Text({
+        text: detail.conversationTopic,
+        style: { fontFamily: 'NothingYouCouldDo', fontSize: 10, fill: 0x6a7e8f, wordWrap: true, wordWrapWidth: base.getContentW() },
+      })
+      topicLine.y = y
+      base.contentContainer.addChild(topicLine)
+      y += Math.max(topicLine.height, 14) + 4
+    }
+
     const quickNeeds = new Text({
       text: detail.topNeedCues.join('  ·  '),
       style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xb7c4d0 },
@@ -433,6 +443,13 @@ export function buildCharacterTooltip() {
         style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xbfccda },
       })),
     ]
+
+    if (data.conversationTopic) {
+      lines.push(new Text({
+        text: data.conversationTopic,
+        style: { fontFamily: 'NothingYouCouldDo', fontSize: 10, fill: 0x6a7e8f, wordWrap: true, wordWrapWidth: 200 },
+      }))
+    }
 
     for (const line of lines) {
       line.y = y

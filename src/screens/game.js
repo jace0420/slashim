@@ -16,6 +16,7 @@ import { initClock, formatClock, createClock, advanceMinute, SPEED_PRESETS, DEFA
 import {
   getCharacterBehaviorSummary,
   getCharacterBehaviorTarget,
+  getCharacterConversationTopic,
   getCharacterNeedSummaries,
   getTopNeedCues,
   initCharacters,
@@ -24,6 +25,7 @@ import {
   minuteTickCharacters,
 } from '../simulation/characters'
 import socialTopics from '../data/social/topics.json'
+import conversationBeats from '../data/social/conversation-beats.json'
 
 function shouldShowTweakPane() {
   return new URLSearchParams(window.location.search).get('tweak') === '1'
@@ -189,6 +191,7 @@ export function mountGame(container) {
       behaviorTarget: getCharacterBehaviorTarget(character),
       topNeedCues: getTopNeedCues(character, 2),
       needSummaries: getCharacterNeedSummaries(character),
+      conversationTopic: getCharacterConversationTopic(character),
     }
   }
 
@@ -202,6 +205,7 @@ export function mountGame(container) {
       color: character.color,
       behavior: getCharacterBehaviorSummary(character),
       topNeedCues: getTopNeedCues(character, 2),
+      conversationTopic: getCharacterConversationTopic(character),
     }
   }
 
@@ -500,11 +504,13 @@ export function mountGame(container) {
     // clock handle — starts paused
     clockHandle = createClock(state.clock, clockParams, {
       onTick: (tickIndex, _minuteAdvanced) => {
-        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics)
+        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast)
         asciiGrid.flush()
         for (const evt of events) {
           if (evt.type === 'room-enter') {
             panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
+          } else if (evt.type === 'social-begin' || evt.type === 'social-topic-beat') {
+            panels.narrative.appendEntry(evt.text)
           }
         }
         refreshCharacterInspectionUI()
@@ -512,10 +518,7 @@ export function mountGame(container) {
       },
       onMinute: (clock) => {
         minuteCount++
-        const socialEvents = minuteTickCharacters(state.characters, state.cast, socialTopics, minuteCount, simRng)
-        for (const evt of socialEvents) {
-          if (evt.type === 'social-talk') panels.narrative.appendEntry(evt.text)
-        }
+        minuteTickCharacters(state.characters, state.cast, socialTopics, minuteCount, simRng)
         refreshCharacterInspectionUI()
         refreshHoverFromPointer()
         clockWidget?.update(clock)
