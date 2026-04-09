@@ -382,36 +382,6 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
   }
 }
 
-// append log entries one at a time; auto-scrolls to bottom on each append
-export function buildNarrativePanel(p) {
-  const base = buildScrollablePanel('NARRATIVE', p)
-
-  function appendEntry(text) {
-    const entry = new Text({
-      text,
-      style: {
-        ...TEXT_STYLE,
-        wordWrap: true,
-        wordWrapWidth: base.getContentW(),
-        breakWords: true,
-        lineHeight: 14,
-      },
-    })
-    entry.y = base.getTotalContentH()
-    base.contentContainer.addChild(entry)
-    // use measured height with a safe minimum in case the text hasn't rendered yet
-    base.setTotalContentH(base.getTotalContentH() + Math.max(entry.height, 14) + ENTRY_GAP)
-    base.scrollToBottom()
-  }
-
-  return {
-    container: base.container,
-    redraw: base.redraw,
-    scroll: base.scroll,
-    appendEntry,
-  }
-}
-
 export function buildCharacterTooltip() {
   const container = new Container()
   container.visible = false

@@ -5,7 +5,8 @@ import Chance from 'chance'
 import { showScreen } from '../router'
 import { createPixiApp } from '../rendering/createPixiApp'
 import { createAsciiGrid } from '../rendering/asciiGrid'
-import { buildCastPanel, buildCharacterTooltip, buildNarrativePanel } from '../ui/panels'
+import { buildCastPanel, buildCharacterTooltip } from '../ui/panels'
+import { createCharacterIconLayer, loadFontAwesome } from '../ui/characterIcons'
 import { buildClockWidget } from '../ui/clockWidget'
 import { computeLayout, DEFAULT_HUD_PARAMS } from '../ui/hudLayout'
 import { createMapViewport } from '../ui/mapViewport'
@@ -71,6 +72,7 @@ export function mountGame(container) {
   let sceneContainer = null
   let panels = {}
   let asciiGrid = null
+  let charIconLayer = null
   let mapVP = null        // mapViewport instance
   let tabStrip = null
   let wheelHandler = null
@@ -88,9 +90,8 @@ export function mountGame(container) {
 
   // live panel param objects — layout zones write into these, panels read from them
   const panelParams = {
-    narrative: { x: 0, y: 0, w: 280, h: 200 },
-    cast:      { x: 0, y: 0, w: 220, h: 600 },
-    clockHud:  { x: 0, y: 0, radius: 28 },
+    cast:     { x: 0, y: 0, w: 220, h: 600 },
+    clockHud: { x: 0, y: 0, radius: 28 },
   }
 
   // computes layout from current viewport size and applies it to all panel params
@@ -98,14 +99,6 @@ export function mountGame(container) {
     const vw = pixiApp.renderer.width
     const vh = pixiApp.renderer.height
     const layout = computeLayout(vw, vh, hudParams)
-
-    // narrative — bottom-left
-    Object.assign(panelParams.narrative, {
-      x: layout.narrative.x,
-      y: layout.narrative.y,
-      w: layout.narrative.w,
-      h: layout.narrative.h,
-    })
 
     // cast — right sidebar
     Object.assign(panelParams.cast, {
@@ -129,7 +122,6 @@ export function mountGame(container) {
     tabStrip?.resize(layout.tabStrip)
 
     // redraw all panels
-    panels.narrative?.redraw()
     panels.cast?.redraw()
     clockWidget?.redraw()
     refreshCharacterInspectionUI()
@@ -399,6 +391,7 @@ export function mountGame(container) {
     pixiApp = await createPixiApp(wrapper)
 
     await Assets.load({ alias: 'NothingYouCouldDo', src: '/assets/fonts/NothingYouCouldDo-Regular.ttf' })
+    await loadFontAwesome()
 
     sceneContainer = new Container()
 
@@ -432,6 +425,12 @@ export function mountGame(container) {
     asciiGrid.flush()
 
     mapVP.content.addChild(asciiGrid.container)
+
+    // character behavior icon layer — sits above the ascii grid in content space
+    charIconLayer = createCharacterIconLayer(state.map.width, state.map.height, asciiGrid.gridW, asciiGrid.gridH)
+    charIconLayer.update(state.characters)
+    mapVP.content.addChild(charIconLayer.container)
+
     mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
     mapVP.interactionLayer.on('pointermove', (event) => {
@@ -451,16 +450,6 @@ export function mountGame(container) {
     // --- HUD overlay layer (sits on top of the map) ---
     const hudLayer = new Container()
     sceneContainer.addChild(hudLayer)
-
-    // narrative panel — bottom-left
-    Object.assign(panelParams.narrative, {
-      x: layout.narrative.x,
-      y: layout.narrative.y,
-      w: layout.narrative.w,
-      h: layout.narrative.h,
-    })
-    panels.narrative = buildNarrativePanel(panelParams.narrative)
-    hudLayer.addChild(panels.narrative.container)
 
     // cast panel — right sidebar
     Object.assign(panelParams.cast, {
@@ -504,15 +493,9 @@ export function mountGame(container) {
     // clock handle — starts paused
     clockHandle = createClock(state.clock, clockParams, {
       onTick: (tickIndex, _minuteAdvanced) => {
-        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast)
+        tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast)
         asciiGrid.flush()
-        for (const evt of events) {
-          if (evt.type === 'room-enter') {
-            panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
-          } else if (evt.type === 'social-begin' || evt.type === 'social-topic-beat') {
-            panels.narrative.appendEntry(evt.text)
-          }
-        }
+        charIconLayer?.update(state.characters)
         refreshCharacterInspectionUI()
         refreshHoverFromPointer()
       },
@@ -558,8 +541,7 @@ export function mountGame(container) {
 
       // check if cursor is over a scrollable panel first
       const scrollablePanels = [
-        { ref: panels.cast,      p: panelParams.cast },
-        { ref: panels.narrative, p: panelParams.narrative },
+        { ref: panels.cast, p: panelParams.cast },
       ]
       for (const { ref, p } of scrollablePanels) {
         if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) {
@@ -579,11 +561,9 @@ export function mountGame(container) {
   function setupTweakPane() {
     // HUD layout tuning
     uiPane = new Pane({ title: 'HUD Layout' })
-    uiPane.addBinding(hudParams, 'sidebarW',   { min: 140, max: 400, step: 1, label: 'sidebar W'   }).on('change', applyLayout)
-    uiPane.addBinding(hudParams, 'tabStripH',   { min: 60, max: 300, step: 1, label: 'tab strip H' }).on('change', applyLayout)
-    uiPane.addBinding(hudParams, 'narrativeW',  { min: 150, max: 500, step: 1, label: 'narrative W' }).on('change', applyLayout)
-    uiPane.addBinding(hudParams, 'narrativeH',  { min: 100, max: 400, step: 1, label: 'narrative H' }).on('change', applyLayout)
-    uiPane.addBinding(hudParams, 'hudPad',      { min: 0, max: 32, step: 1,    label: 'padding'     }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'sidebarW',  { min: 140, max: 400, step: 1, label: 'sidebar W'   }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'tabStripH', { min: 60, max: 300, step: 1, label: 'tab strip H' }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'hudPad',    { min: 0, max: 32, step: 1,   label: 'padding'     }).on('change', applyLayout)
 
     // map generation debug controls
     mapPane = new Pane({ title: 'Map Generation' })
@@ -600,15 +580,24 @@ export function mountGame(container) {
         mapVP.content.removeChild(asciiGrid.container)
         asciiGrid.destroy()
       }
+      if (charIconLayer) {
+        mapVP.content.removeChild(charIconLayer.container)
+        charIconLayer.destroy()
+      }
       asciiGrid = createAsciiGrid(state.map.width, state.map.height, 16)
       asciiGrid.setRotatedCells(state.map.rotatedCells)
       asciiGrid.renderFullMap(state.map)
       mapVP.content.addChild(asciiGrid.container)
-      mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
 
       state.characters = initCharacters(state.cast, state.map, newSeed)
       renderCharacters(state.characters, asciiGrid, state.map)
       asciiGrid.flush()
+
+      charIconLayer = createCharacterIconLayer(state.map.width, state.map.height, asciiGrid.gridW, asciiGrid.gridH)
+      charIconLayer.update(state.characters)
+      mapVP.content.addChild(charIconLayer.container)
+
+      mapVP.fitToView(asciiGrid.gridW, asciiGrid.gridH)
       simRng = new Chance(newSeed + '-sim')
       refreshCharacterInspectionUI()
       refreshHoverFromPointer()
@@ -643,27 +632,19 @@ export function mountGame(container) {
 
     simPane.addButton({ title: 'Advance 1 Tick' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
-      const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
+      tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
       asciiGrid.flush()
-      for (const evt of events) {
-        if (evt.type === 'room-enter') {
-          panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
-        }
-      }
+      charIconLayer?.update(state.characters)
       refreshCharacterInspectionUI()
       refreshHoverFromPointer()
     })
     simPane.addButton({ title: 'Advance 1 Minute' }).on('click', () => {
       if (!clockHandle?.isPaused()) return
       for (let t = 0; t < clockParams.ticksPerMinute; t++) {
-        const events = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
-        for (const evt of events) {
-          if (evt.type === 'room-enter') {
-            panels.narrative.appendEntry(`${evt.name} entered the ${evt.room}.`)
-          }
-        }
+        tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance)
       }
       asciiGrid.flush()
+      charIconLayer?.update(state.characters)
       advanceMinute(state.clock)
       minuteTickCharacters(state.characters)
       refreshCharacterInspectionUI()
@@ -690,6 +671,7 @@ export function mountGame(container) {
     }
 
     asciiGrid?.destroy()
+    charIconLayer?.destroy()
     mapVP?.destroy()
     tabStrip?.destroy()
     pane?.dispose()

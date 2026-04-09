@@ -4,14 +4,10 @@
 const SIDEBAR_W = 220
 const TAB_STRIP_H = 140
 const HUD_PAD = 8       // padding from screen edges
-const NARRATIVE_W = 280
-const NARRATIVE_H = 200
 
 export const DEFAULT_HUD_PARAMS = {
   sidebarW: SIDEBAR_W,
   tabStripH: TAB_STRIP_H,
-  narrativeW: NARRATIVE_W,
-  narrativeH: NARRATIVE_H,
   hudPad: HUD_PAD,
 }
 
@@ -36,14 +32,6 @@ export function computeLayout(vw, vh, p = DEFAULT_HUD_PARAMS) {
     h: vh - p.tabStripH - pad,
   }
 
-  // narrative log — bottom-left, above the tab strip
-  const narrative = {
-    x: pad,
-    y: vh - p.tabStripH - p.narrativeH - pad,
-    w: p.narrativeW,
-    h: p.narrativeH,
-  }
-
   // top-left HUD strip for clock + sim controls
   const topLeftHud = {
     x: pad,
@@ -61,5 +49,5 @@ export function computeLayout(vw, vh, p = DEFAULT_HUD_PARAMS) {
     h: vh - p.tabStripH,
   }
 
-  return { mapViewport, topLeftHud, rightSidebar, narrative, tabStrip }
+  return { mapViewport, topLeftHud, rightSidebar, tabStrip }
 }
