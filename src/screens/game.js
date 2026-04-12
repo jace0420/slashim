@@ -5,12 +5,13 @@ import Chance from 'chance'
 import { showScreen } from '../router'
 import { createPixiApp } from '../rendering/createPixiApp'
 import { createAsciiGrid } from '../rendering/asciiGrid'
+import { loadRotFont } from '../rendering/rotDisplay'
 import { buildCastPanel, buildCharacterTooltip } from '../ui/panels'
 import { createCharacterIconLayer, loadFontAwesome } from '../ui/characterIcons'
 import { buildClockWidget } from '../ui/clockWidget'
 import { computeLayout, DEFAULT_HUD_PARAMS } from '../ui/hudLayout'
 import { createMapViewport } from '../ui/mapViewport'
-import { createTabStrip } from '../ui/tabStrip'
+import { createTabStrip, TAB_BAR_W, PANEL_W } from '../ui/tabStrip'
 import { buildEventLogPanel } from '../ui/eventLogPanel'
 import { createEventLog } from '../store/eventLog'
 import { generateMap, debugPrintMap } from '../generation/mapGenerator'
@@ -27,8 +28,10 @@ import {
   tickCharacters,
   minuteTickCharacters,
 } from '../simulation/characters'
+import { getRelationship, getRelationshipLabel } from '../simulation/social'
 import socialTopics from '../data/social/topics.json'
 import conversationBeats from '../data/social/conversation-beats.json'
+import archetypePreferences from '../data/social/archetype-preferences.json'
 
 function shouldShowTweakPane() {
   return new URLSearchParams(window.location.search).get('tweak') === '1'
@@ -92,6 +95,8 @@ export function mountGame(container) {
 
   const clockParams = { ...DEFAULT_CLOCK_PARAMS }
   const hudParams = { ...DEFAULT_HUD_PARAMS }
+  // screen-space bounds for wheel hit-testing — kept in sync with applyLayout
+  const panelScreenBounds = { eventLog: { x: 0, y: 0, w: 0, h: 0 } }
 
   // live panel param objects — layout zones write into these, panels read from them
   const panelParams = {
@@ -100,8 +105,6 @@ export function mountGame(container) {
     eventLog: { x: 0, y: 0, w: 0, h: 0 },
   }
 
-  // canvas-space bounds of the tab strip — used by the wheel handler for scroll hit-testing
-  const tabStripBounds = { x: 0, y: 0, w: 0, h: 0 }
 
   // computes layout from current viewport size and applies it to all panel params
   function applyLayout() {
@@ -127,14 +130,17 @@ export function mountGame(container) {
     // resize map viewport
     mapVP?.resize(layout.mapViewport)
 
-    // resize tab strip
-    tabStrip?.resize(layout.tabStrip)
+    // resize tab strip — just needs the new viewport height
+    tabStrip?.resize(vh)
 
-    // event log panel bounds — fills the tab strip content area
-    Object.assign(tabStripBounds, layout.tabStrip)
-    Object.assign(panelParams.eventLog, {
-      w: layout.tabStrip.w - 16,
-      h: layout.tabStrip.h - 28 - 8,
+    // event log panel — sized to fill its panel slot; positioned by tab strip
+    Object.assign(panelParams.eventLog, { w: PANEL_W, h: vh })
+    // screen-space bounds used by the wheel handler
+    Object.assign(panelScreenBounds.eventLog, {
+      x: TAB_BAR_W + 1 * PANEL_W,  // event log is tab slot 1
+      y: 0,
+      w: PANEL_W,
+      h: vh,
     })
     logPanel?.resize()
 
@@ -201,6 +207,11 @@ export function mountGame(container) {
       topNeedCues: getTopNeedCues(character, 2),
       needSummaries: getCharacterNeedSummaries(character),
       conversationTopic: getCharacterConversationTopic(character),
+      relationships: state.cast.map((otherCast, otherIndex) => {
+        if (otherIndex === castIndex) return null
+        const value = getRelationship(state.relationships, castIndex, otherIndex)
+        return { castIndex: otherIndex, name: otherCast.name, value, label: getRelationshipLabel(value) }
+      }).filter(Boolean),
     }
   }
 
@@ -408,6 +419,7 @@ export function mountGame(container) {
     pixiApp = await createPixiApp(wrapper)
 
     await Assets.load({ alias: 'NothingYouCouldDo', src: '/assets/fonts/NothingYouCouldDo-Regular.ttf' })
+    await loadRotFont()
     await loadFontAwesome()
 
     sceneContainer = new Container()
@@ -510,7 +522,7 @@ export function mountGame(container) {
     // clock handle — starts paused
     clockHandle = createClock(state.clock, clockParams, {
       onTick: (tickIndex, _minuteAdvanced) => {
-        const tickEvents = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast)
+        const tickEvents = tickCharacters(state.characters, state.map, asciiGrid, simRng, clockParams.moveChance, tickIndex, socialTopics, conversationBeats, state.cast, state.relationships, archetypePreferences)
         if (state.eventLog) {
           for (const e of tickEvents) state.eventLog.push(e, state.clock)
         }
@@ -528,27 +540,36 @@ export function mountGame(container) {
       },
     })
 
-    // --- bottom tab strip ---
-    tabStrip = createTabStrip(layout.tabStrip)
+    // --- left tab bar (icon-only, panels overlay the map) ---
+    tabStrip = createTabStrip(vh)
 
-    // location placeholder as the first tab
+    // locations tab — placeholder content panel
     const locationContent = new Container()
+    const locBg = new Graphics()
+    locBg.rect(0, 0, PANEL_W, vh)
+      .fill({ color: 0x0d0d18, alpha: 0.90 })
+      .stroke({ color: 0x445566, alpha: 0.45, width: 1 })
+    locationContent.addChild(locBg)
     const locText = new Text({
       text: 'Location data will appear here.',
       style: { fontSize: 11, fill: 0x778899, fontFamily: 'monospace' },
     })
+    locText.x = 12
+    locText.y = 12
     locationContent.addChild(locText)
-    tabStrip.addTab('locations', 'LOCATIONS', locationContent)
+    tabStrip.addTab('locations', '\uf279', 'Locations', locationContent)
 
     // event log tab
     state.eventLog = createEventLog(500)
-    Object.assign(tabStripBounds, layout.tabStrip)
-    Object.assign(panelParams.eventLog, {
-      w: layout.tabStrip.w - 16,
-      h: layout.tabStrip.h - 28 - 8,
+    Object.assign(panelParams.eventLog, { w: PANEL_W, h: vh })
+    Object.assign(panelScreenBounds.eventLog, {
+      x: TAB_BAR_W + 1 * PANEL_W,
+      y: 0,
+      w: PANEL_W,
+      h: vh,
     })
     logPanel = buildEventLogPanel(panelParams.eventLog, state.eventLog)
-    tabStrip.addTab('log', 'EVENT LOG', logPanel.container)
+    tabStrip.addTab('log', '\uf46d', 'Event Log', logPanel.container)
     logUnsub = state.eventLog.subscribe((entry, purged) => logPanel.onNewEntry(entry, purged))
 
     sceneContainer.addChild(tabStrip.container)
@@ -582,15 +603,10 @@ export function mountGame(container) {
         }
       }
 
-      // event log scroll — cursor anywhere in the tab strip content area
+      // event log scroll — cursor is within the visible event log panel
       if (logPanel?.container.visible) {
-        const TAB_LABEL_H = 28
-        if (
-          cx >= tabStripBounds.x &&
-          cx <= tabStripBounds.x + tabStripBounds.w &&
-          cy >= tabStripBounds.y + TAB_LABEL_H &&
-          cy <= tabStripBounds.y + tabStripBounds.h
-        ) {
+        const elb = panelScreenBounds.eventLog
+        if (cx >= elb.x && cx <= elb.x + elb.w && cy >= elb.y && cy <= elb.y + elb.h) {
           logPanel.scroll(e.deltaY * 0.5)
           e.preventDefault()
           return
@@ -618,9 +634,8 @@ export function mountGame(container) {
 
     // HUD layout tuning
     uiPane = new Pane({ title: 'HUD Layout' })
-    uiPane.addBinding(hudParams, 'sidebarW',  { min: 140, max: 400, step: 1, label: 'sidebar W'   }).on('change', applyLayout)
-    uiPane.addBinding(hudParams, 'tabStripH', { min: 60, max: 300, step: 1, label: 'tab strip H' }).on('change', applyLayout)
-    uiPane.addBinding(hudParams, 'hudPad',    { min: 0, max: 32, step: 1,   label: 'padding'     }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'sidebarW', { min: 140, max: 400, step: 1, label: 'sidebar W' }).on('change', applyLayout)
+    uiPane.addBinding(hudParams, 'hudPad',    { min: 0, max: 32, step: 1,   label: 'padding'   }).on('change', applyLayout)
 
     // map generation debug controls
     mapPane = new Pane({ title: 'Map Generation' })

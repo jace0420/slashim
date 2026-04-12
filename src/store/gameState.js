@@ -38,6 +38,7 @@ export const state = {
   characters: [],    // runtime character entries with position, color, etc.
   simulation: null,  // { running } — tracks whether the clock loop is active
   eventLog: null,    // created on game start; holds all simulation event entries
+  relationships: {}, // pairwise relationship values keyed by "lo:hi" cast indices
   inspection: {
     hoveredCastIndex: null,
     selectedCastIndex: null,
@@ -59,6 +60,7 @@ export function resetGameState() {
   state.characters = []
   state.simulation = null
   state.eventLog = null
+  state.relationships = {}
   state.inspection = {
     hoveredCastIndex: null,
     selectedCastIndex: null,

@@ -6,7 +6,7 @@
   "propsFile": "manor.props.json",
   "maxRooms": 14,
   "minRooms": 8,
-  "hallwayWidth": 1,
+  "hallwayWidth": 2,
   "wallChar": "#",
   "floorChar": ".",
   "doorChar": "+",

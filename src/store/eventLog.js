@@ -14,6 +14,8 @@ function formatEvent(raw) {
     case 'social-begin':
     case 'social-topic-beat':
       return { category: 'social', text: raw.text }
+    case 'social-relationship-changed':
+      return { category: 'social', text: `${raw.nameA} and ${raw.nameB} are now ${raw.label}` }
     default:
       return { category: 'other', text: `[${raw.type}]` }
   }

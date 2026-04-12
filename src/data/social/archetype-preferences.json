@@ -1,0 +1,22 @@
+{
+  "the-nerd": {
+    "likes": ["academics", "pop-culture", "hobbies"],
+    "dislikes": ["sports", "gossip"]
+  },
+  "the-jock": {
+    "likes": ["sports", "adventure", "gossip"],
+    "dislikes": ["academics", "supernatural"]
+  },
+  "the-hero": {
+    "likes": ["adventure", "family", "future"],
+    "dislikes": []
+  },
+  "the-outcast": {
+    "likes": ["supernatural", "hobbies", "pop-culture"],
+    "dislikes": ["gossip", "sports"]
+  },
+  "the-final-girl": {
+    "likes": ["family", "future", "adventure"],
+    "dislikes": ["gossip"]
+  }
+}

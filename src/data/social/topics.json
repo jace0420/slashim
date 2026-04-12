@@ -1,10 +1,84 @@
-[
-  "{A} talks to {B} about their day.",
-  "{A} and {B} discuss their favorite movies.",
-  "{A} and {B} share their thoughts on the latest news.",
-  "{A} and {B} talk about their plans.",
-  "{A} and {B} discuss their hobbies.",
-  "{A} and {B} talk about their families.",
-  "{A} and {B} share their opinions on a recent event.",
-  "{A} and {B} discuss their favorite books."
-]
+{
+  "categories": {
+    "academics": [
+      "{A} talks to {B} about a book they've been reading.",
+      "{A} and {B} discuss their favorite films.",
+      "{A} and {B} debate which classic novels are actually worth reading.",
+      "{A} and {B} talk about a documentary one of them watched recently.",
+      "{A} tells {B} about a fascinating thing they read online.",
+      "{A} and {B} exchange opinions on a history topic that came up earlier."
+    ],
+    "sports": [
+      "{A} and {B} talk about last night's game.",
+      "{A} asks {B} who they think will win the championships.",
+      "{A} and {B} bond over their shared love of a sport.",
+      "{A} tries to explain a sport's rules to {B}.",
+      "{A} and {B} debate who the best athlete of all time is.",
+      "{A} mentions a local sporting event they were thinking of attending."
+    ],
+    "gossip": [
+      "{A} tells {B} something they probably shouldn't repeat.",
+      "{A} and {B} whisper about someone they both know.",
+      "{A} leans in and shares a rumor with {B}.",
+      "{A} and {B} discuss what they've been hearing around the house.",
+      "{A} asks {B} if they've heard the latest about someone at the party.",
+      "{A} and {B} trade knowing glances and lower voices."
+    ],
+    "pop-culture": [
+      "{A} and {B} discuss their favorite movies.",
+      "{A} and {B} argue over which band is better.",
+      "{A} tells {B} about a TV show they've been obsessed with.",
+      "{A} and {B} quote lines from a film they both love.",
+      "{A} asks {B} if they've heard a particular song lately.",
+      "{A} and {B} talk about a celebrity scandal making the rounds."
+    ],
+    "hobbies": [
+      "{A} and {B} discuss their hobbies.",
+      "{A} tells {B} about a project they've been working on.",
+      "{A} and {B} discover they share an unusual interest.",
+      "{A} shows {B} something they made recently.",
+      "{A} asks {B} what they do to unwind.",
+      "{A} and {B} swap tips on a craft they both dabble in."
+    ],
+    "family": [
+      "{A} and {B} talk about their families.",
+      "{A} tells {B} about a childhood memory that came to mind.",
+      "{A} and {B} swap stories about growing up.",
+      "{A} mentions something funny a sibling did recently.",
+      "{A} asks {B} what their family get-togethers are like.",
+      "{A} and {B} commiserate about difficult relatives."
+    ],
+    "news": [
+      "{A} and {B} share their thoughts on the latest news.",
+      "{A} and {B} share their opinions on a recent event.",
+      "{A} brings up something from the headlines that's been bothering them.",
+      "{A} and {B} try to make sense of something strange happening in the world.",
+      "{A} asks {B} what they think about recent local events.",
+      "{A} and {B} disagree politely about current events."
+    ],
+    "future": [
+      "{A} and {B} talk about their plans.",
+      "{A} asks {B} where they see themselves in a few years.",
+      "{A} and {B} daydream about places they'd like to travel.",
+      "{A} shares a goal they've been quietly working toward.",
+      "{A} and {B} talk about what they'd do if money were no object.",
+      "{A} and {B} speculate about how things might be different someday."
+    ],
+    "adventure": [
+      "{A} tells {B} about a crazy trip they took once.",
+      "{A} and {B} share stories about close calls they've had.",
+      "{A} suggests a spontaneous idea to {B}.",
+      "{A} and {B} swap stories about the wildest things they've done.",
+      "{A} asks {B} if they've ever done anything truly reckless.",
+      "{A} and {B} talk about bucket-list experiences they want to check off."
+    ],
+    "supernatural": [
+      "{A} tells {B} about a dream that's been haunting them.",
+      "{A} and {B} trade ghost stories they half-believe.",
+      "{A} asks {B} if they believe in anything they can't explain.",
+      "{A} mentions a strange coincidence that's been unsettling them.",
+      "{A} and {B} whisper about something odd they noticed in the house.",
+      "{A} and {B} debate whether there's something wrong about this place."
+    ]
+  }
+}

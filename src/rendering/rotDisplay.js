@@ -1,5 +1,17 @@
 import { Display } from 'rot-js'
 
+const UNSCII_FAMILY = 'unscii-16-full'
+const UNSCII_URL = '/assets/fonts/unscii-16-full.ttf'
+
+// load the unscii font once and register it with the document
+let _unsciiLoaded = null
+export async function loadRotFont() {
+  if (_unsciiLoaded) return _unsciiLoaded
+  const face = new FontFace(UNSCII_FAMILY, `url(${UNSCII_URL})`)
+  _unsciiLoaded = face.load().then(f => { document.fonts.add(f) })
+  return _unsciiLoaded
+}
+
 // convert a 0xRRGGBB int tint to a CSS '#rrggbb' string
 export function tintToCSS(tint) {
   return '#' + (tint & 0xffffff).toString(16).padStart(6, '0')
@@ -7,12 +19,13 @@ export function tintToCSS(tint) {
 
 // wraps ROT.Display with an API shaped for our map rendering needs.
 // the underlying canvas is meant to be consumed by rotBridge for PixiJS integration.
-export function createRotDisplay(mapW, mapH, cellPx = 16) {
+export function createRotDisplay(mapW, mapH, cellPx = 16, dpr = 1) {
+  const fontSize = Math.round(cellPx * dpr)
   const display = new Display({
     width: mapW,
     height: mapH,
-    fontSize: cellPx,
-    fontFamily: 'monospace',
+    fontSize: fontSize,
+    fontFamily: UNSCII_FAMILY,
     fg: '#666666',
     bg: '#000000',
     forceSquareRatio: true,
@@ -29,7 +42,7 @@ export function createRotDisplay(mapW, mapH, cellPx = 16) {
   const spacingY = Math.ceil(gridH / mapH)
 
   // the font string ROT is using (needed if we draw outside of ROT)
-  const font = `${cellPx}px monospace`
+  const font = `${fontSize}px ${UNSCII_FAMILY}`
 
   function draw(x, y, char, fg, bg) {
     display.draw(x, y, char, fg ?? null, bg ?? null)
@@ -84,5 +97,6 @@ export function createRotDisplay(mapW, mapH, cellPx = 16) {
     spacingX,
     spacingY,
     font,
+    dpr,
   }
 }

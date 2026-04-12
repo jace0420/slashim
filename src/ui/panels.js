@@ -2,7 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js'
 
 const TITLE_H     = 20
 const CONTENT_PAD = 6
-const SCROLLBAR_W = 4
+const SCROLLBAR_W = 5
 const ROW_GAP     = 14
 const ENTRY_GAP   = 4
 const CORNER_R    = 8
@@ -61,7 +61,7 @@ function buildScrollablePanel(label, p) {
 
     scrollTrack.clear()
     scrollTrack.rect(tx, ty, SCROLLBAR_W, th)
-      .fill({ color: 0x8899aa, alpha: 0.18 })
+      .fill({ color: 0x8899aa, alpha: 0.28 })
 
     const ms = maxScroll()
     if (ms <= 0) {
@@ -297,11 +297,11 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
 
     const identityLine = new Text({
       text: detail.room ? `${detail.archetype}  ·  ${detail.room}` : detail.archetype,
-      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0x8ea0b3 },
+      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0x8ea0b3, wordWrap: true, wordWrapWidth: base.getContentW() },
     })
     identityLine.y = y
     base.contentContainer.addChild(identityLine)
-    y += 18
+    y += identityLine.height + 4
 
     const summaryLine = new Text({
       text: `${detail.health}  ·  ${detail.mood}`,
@@ -315,11 +315,11 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
       text: detail.behaviorTarget
         ? `${detail.behavior}  ·  ${detail.behaviorTarget}`
         : detail.behavior,
-      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xaebfd0 },
+      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xaebfd0, wordWrap: true, wordWrapWidth: base.getContentW() },
     })
     behaviorLine.y = y
     base.contentContainer.addChild(behaviorLine)
-    y += 20
+    y += behaviorLine.height + 4
 
     if (detail.conversationTopic) {
       const topicLine = new Text({
@@ -333,11 +333,11 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
 
     const quickNeeds = new Text({
       text: detail.topNeedCues.join('  ·  '),
-      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xb7c4d0 },
+      style: { fontFamily: 'NothingYouCouldDo', fontSize: 11, fill: 0xb7c4d0, wordWrap: true, wordWrapWidth: base.getContentW() },
     })
     quickNeeds.y = y
     base.contentContainer.addChild(quickNeeds)
-    y += 26
+    y += quickNeeds.height + 6
 
     const sectionLabel = new Text({
       text: 'NEEDS',
@@ -351,6 +351,38 @@ export function buildCastPanel(p, castEntries = [], options = {}) {
       const meter = drawMeter(y, need)
       base.contentContainer.addChild(meter)
       y += 38
+    }
+
+    if (detail.relationships?.length > 0) {
+      const relLabel = new Text({
+        text: 'RELATIONSHIPS',
+        style: { fontFamily: 'monospace', fontSize: 9, fill: 0x7a8a99, letterSpacing: 1 },
+      })
+      relLabel.y = y
+      base.contentContainer.addChild(relLabel)
+      y += 16
+
+      for (const rel of detail.relationships) {
+        const row = new Container()
+        row.y = y
+
+        const nameText = new Text({
+          text: rel.name,
+          style: { fontFamily: 'monospace', fontSize: 9, fill: 0xaebccc },
+        })
+        row.addChild(nameText)
+
+        const valueColor = rel.value >= 50 ? 0x78bba3 : rel.value >= 0 ? 0x8899bb : rel.value >= -50 ? 0xbb9f78 : 0xc46d6d
+        const relText = new Text({
+          text: rel.label,
+          style: { fontFamily: 'NothingYouCouldDo', fontSize: 10, fill: valueColor },
+        })
+        relText.x = base.getContentW() - relText.width
+        row.addChild(relText)
+
+        base.contentContainer.addChild(row)
+        y += 14
+      }
     }
 
     base.setTotalContentH(y)

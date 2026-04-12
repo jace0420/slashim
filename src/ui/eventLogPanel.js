@@ -1,9 +1,9 @@
 import { Container, Graphics, Text } from 'pixi.js'
 
 const FILTER_BAR_H = 32
-const SCROLLBAR_W  = 4
+const SCROLLBAR_W  = 5
 const CONTENT_PAD  = 8
-const ROW_STRIDE   = 18   // px per log row including gap
+const ROW_MIN_H    = 18   // minimum row height (single-line messages)
 
 // timestamp is always 8 chars wide (" 8:42 PM") at 6px/char → ~48px
 // badge starts after that gap, longest is "[SOCIAL]" = 8 chars → ~48px
@@ -33,10 +33,13 @@ const CAT_BADGE_LABELS = {
   other:    '[???]',
 }
 
+const CATEGORY_KEYS = ['movement', 'behavior', 'social']
+
 // p is the live bounds object ({ x, y, w, h }) — mutated by applyLayout, read on each redraw.
 // eventLog is the createEventLog() instance.
 export function buildEventLogPanel(p, eventLog) {
-  let activeFilter = 'all'
+  // empty set = all categories visible (same as ALL)
+  let activeFilters = new Set()
   let scrollOffset = 0
   let atBottom = true
   let totalContentH = 0
@@ -100,13 +103,26 @@ export function buildEventLogPanel(p, eventLog) {
         btnTxt.y = Math.floor((btnH - btnTxt.height) / 2)
       }
 
-      draw(f.key === activeFilter)
+      draw(activeFilters.size === 0 || (f.key !== 'all' && activeFilters.has(f.key)))
       filterDrawFns[f.key] = { draw, color: f.color }
 
       btn.on('pointerdown', () => {
-        activeFilter = f.key
+        if (f.key === 'all') {
+          // ALL clears the set — everything visible again
+          activeFilters.clear()
+        } else {
+          // toggle this category; if the set becomes full (all cats selected), clear it instead
+          if (activeFilters.has(f.key)) {
+            activeFilters.delete(f.key)
+          } else {
+            activeFilters.add(f.key)
+          }
+          if (activeFilters.size === CATEGORY_KEYS.length) activeFilters.clear()
+        }
         atBottom = true
-        for (const [k, { draw: d }] of Object.entries(filterDrawFns)) d(k === activeFilter)
+        for (const [k, { draw: d }] of Object.entries(filterDrawFns)) {
+          d(activeFilters.size === 0 || (k !== 'all' && activeFilters.has(k)))
+        }
         fullRebuild()
         if (atBottom) scrollToBottom()
         drawScrollbar()
@@ -121,7 +137,7 @@ export function buildEventLogPanel(p, eventLog) {
   function maxScroll() { return Math.max(0, totalContentH - vpH()) }
 
   function shouldShowEntry(entry) {
-    return activeFilter === 'all' || entry.category === activeFilter
+    return activeFilters.size === 0 || activeFilters.has(entry.category)
   }
 
   function formatTimestamp(ts) {
@@ -152,13 +168,23 @@ export function buildEventLogPanel(p, eventLog) {
     badgeText.y = 3
     row.addChild(badgeText)
 
+    const msgWrapW = Math.max(60, p.w - MSG_X - SCROLLBAR_W - CONTENT_PAD)
     const msgText = new Text({
       text: entry.text,
-      style: { fontFamily: 'monospace', fontSize: 9, fill: 0xaabbcc },
+      style: {
+        fontFamily: 'monospace',
+        fontSize: 9,
+        fill: 0xaabbcc,
+        wordWrap: true,
+        wordWrapWidth: msgWrapW,
+      },
     })
     msgText.x = MSG_X
     msgText.y = 3
     row.addChild(msgText)
+
+    // expose row height for variable-stride layout
+    row._rowH = Math.max(ROW_MIN_H, Math.ceil(msgText.height) + 6)
 
     return row
   }
@@ -177,27 +203,33 @@ export function buildEventLogPanel(p, eventLog) {
 
   function fullRebuild() {
     contentContainer.removeChildren()
-    const entries = activeFilter === 'all'
+    const entries = activeFilters.size === 0
       ? eventLog.entries
-      : eventLog.entries.filter(e => e.category === activeFilter)
+      : eventLog.entries.filter(e => activeFilters.has(e.category))
 
     let y = CONTENT_PAD / 2
     for (const entry of entries) {
       const row = makeRow(entry)
       row.y = y
       contentContainer.addChild(row)
-      y += ROW_STRIDE
+      y += row._rowH
     }
     totalContentH = y + CONTENT_PAD / 2
     positionContent()
   }
 
   function appendRow(entry) {
-    const rowCount = contentContainer.children.length
+    // compute y from last child's position + height
+    let y = CONTENT_PAD / 2
+    const children = contentContainer.children
+    if (children.length > 0) {
+      const last = children[children.length - 1]
+      y = last.y + (last._rowH ?? ROW_MIN_H)
+    }
     const row = makeRow(entry)
-    row.y = CONTENT_PAD / 2 + rowCount * ROW_STRIDE
+    row.y = y
     contentContainer.addChild(row)
-    totalContentH = CONTENT_PAD / 2 + (rowCount + 1) * ROW_STRIDE + CONTENT_PAD / 2
+    totalContentH = y + row._rowH + CONTENT_PAD / 2
     positionContent()
   }
 
@@ -208,7 +240,7 @@ export function buildEventLogPanel(p, eventLog) {
 
     scrollTrack.clear()
     scrollTrack.rect(tx, ty, SCROLLBAR_W, th)
-      .fill({ color: 0x8899aa, alpha: 0.18 })
+      .fill({ color: 0x8899aa, alpha: 0.28 })
 
     const ms = maxScroll()
     if (ms <= 0) { scrollThumb.clear(); return }
@@ -222,9 +254,6 @@ export function buildEventLogPanel(p, eventLog) {
   }
 
   function redraw() {
-    container.x = p.x
-    container.y = p.y
-
     bg.clear()
     bg.rect(0, 0, p.w, p.h)
       .fill({ color: 0x111118, alpha: 0.55 })

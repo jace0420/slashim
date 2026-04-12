@@ -1,153 +1,151 @@
 import { Container, Graphics, Text } from 'pixi.js'
 
-// bottom tab strip — horizontal tab bar with collapsible content area above it.
-// each tab has a label, and the content area shows the active tab's PixiJS container.
+// narrow icon-only tab bar on the left edge.
+// panels float as independent overlays — any subset can be open simultaneously.
 
-const TAB_H = 28          // height of the clickable tab labels row
-const TAB_MIN_W = 90
-const TAB_GAP = 2
-const TAB_PAD_X = 12
+export const TAB_BAR_W = 44   // width of the icon bar itself
+export const PANEL_W   = 320  // width of each panel overlay
 
-export function createTabStrip(bounds) {
+const BTN_SIZE = 36   // square button size
+const BTN_GAP  = 4    // gap between buttons
+const BTN_X    = Math.floor((TAB_BAR_W - BTN_SIZE) / 2)  // center button in bar
+
+const TOOLTIP_OFFSET_X = 6  // gap between bar right edge and tooltip left edge
+
+export function createTabStrip(vh) {
   const container = new Container()
-  container.x = bounds.x
-  container.y = bounds.y
+  container.x = 0
+  container.y = 0
 
-  // background covers the whole strip area
-  const bg = new Graphics()
-  container.addChild(bg)
+  // the bar itself — thin dark column on the left edge
+  const barBg = new Graphics()
+  container.addChild(barBg)
 
-  // the tab labels row sits at the top of the strip
-  const tabRow = new Container()
-  container.addChild(tabRow)
+  // tooltip sits on top of everything else in the bar container
+  const tooltipContainer = new Container()
+  tooltipContainer.visible = false
+  container.addChild(tooltipContainer)
 
-  // content area sits below the tab row
-  const contentArea = new Container()
-  contentArea.y = TAB_H
-  container.addChild(contentArea)
+  const tooltipBg = new Graphics()
+  tooltipContainer.addChild(tooltipBg)
+  const tooltipText = new Text({
+    text: '',
+    style: { fontSize: 10, fill: 0xccd8e4, fontFamily: 'monospace', letterSpacing: 0.5 },
+  })
+  tooltipText.x = 8
+  tooltipText.y = 6
+  tooltipContainer.addChild(tooltipText)
 
-  // content mask clips the content area
-  const contentMask = new Graphics()
-  container.addChild(contentMask)
-  contentArea.mask = contentMask
+  let tabs = []
+  let barH = vh
 
-  let tabs = []       // { key, label, tabBtn, content }
-  let activeKey = null
-  let collapsed = false
-
-  function drawBg() {
-    bg.clear()
-    bg.rect(0, 0, bounds.w, bounds.h)
-      .fill({ color: 0x0c0c14, alpha: 0.88 })
-
-    // top border line
-    bg.moveTo(0, 0).lineTo(bounds.w, 0)
-      .stroke({ color: 0x556677, alpha: 0.4, width: 1 })
+  function drawBar() {
+    barBg.clear()
+    barBg.rect(0, 0, TAB_BAR_W, barH)
+      .fill({ color: 0x0a0a12, alpha: 0.92 })
+    // right border separating bar from map
+    barBg.moveTo(TAB_BAR_W - 1, 0).lineTo(TAB_BAR_W - 1, barH)
+      .stroke({ color: 0x445566, alpha: 0.5, width: 1 })
   }
 
-  function drawContentMask() {
-    const ch = collapsed ? 0 : bounds.h - TAB_H
-    contentMask.clear()
-    contentMask.rect(0, TAB_H, bounds.w, ch)
-      .fill({ color: 0xffffff })
+  function drawBtn(tab) {
+    const { btnBg, iconText, open } = tab
+    btnBg.clear()
+    btnBg.roundRect(0, 0, BTN_SIZE, BTN_SIZE, 6)
+      .fill({ color: open ? 0x1a2640 : 0x111118, alpha: open ? 0.95 : 0.75 })
+      .stroke({ color: open ? 0x8899aa : 0x445566, alpha: open ? 0.8 : 0.45, width: 1 })
+    iconText.style.fill = open ? 0xd0dce8 : 0x778899
   }
 
-  function drawTabs() {
-    // clear old tab buttons
-    tabRow.removeChildren()
-    let tx = TAB_GAP
-
-    for (const tab of tabs) {
-      const isActive = tab.key === activeKey
-      const btn = new Container()
-      btn.x = tx
-      btn.y = 0
-      btn.eventMode = 'static'
-      btn.cursor = 'pointer'
-
-      const btnBg = new Graphics()
-      const btnW = Math.max(TAB_MIN_W, tab.label.length * 8 + TAB_PAD_X * 2)
-
-      btnBg.rect(0, 0, btnW, TAB_H)
-        .fill({ color: isActive ? 0x1a1a2e : 0x111118, alpha: isActive ? 0.95 : 0.7 })
-        .stroke({ color: isActive ? 0x8899aa : 0x445566, alpha: 0.5, width: 1 })
-      btn.addChild(btnBg)
-
-      const btnTxt = new Text({
-        text: tab.label,
-        style: {
-          fontSize: 10,
-          fill: isActive ? 0xcccccc : 0x778899,
-          fontFamily: 'monospace',
-          letterSpacing: 1,
-        },
-      })
-      btnTxt.x = Math.floor((btnW - btnTxt.width) / 2)
-      btnTxt.y = Math.floor((TAB_H - btnTxt.height) / 2)
-      btn.addChild(btnTxt)
-
-      btn.on('pointerdown', () => {
-        if (tab.key === activeKey) {
-          // clicking active tab toggles collapse
-          collapsed = !collapsed
-        } else {
-          activeKey = tab.key
-          collapsed = false
-        }
-        refresh()
-      })
-
-      tab.tabBtn = btn
-      tabRow.addChild(btn)
-      tx += btnW + TAB_GAP
-    }
+  function showTooltip(label, btnY) {
+    tooltipText.text = label
+    const boxW = Math.ceil(tooltipText.width) + 16
+    const boxH = Math.ceil(tooltipText.height) + 12
+    tooltipBg.clear()
+    tooltipBg.roundRect(0, 0, boxW, boxH, 5)
+      .fill({ color: 0x10171f, alpha: 0.94 })
+      .stroke({ color: 0x6a7e90, alpha: 0.65, width: 1 })
+    tooltipContainer.x = TAB_BAR_W + TOOLTIP_OFFSET_X
+    tooltipContainer.y = Math.round(btnY + BTN_SIZE / 2 - boxH / 2)
+    tooltipContainer.visible = true
+    // ensure tooltip is above bar bg but below panel content
+    container.setChildIndex(tooltipContainer, container.children.length - 1)
   }
 
-  function showActiveContent() {
-    // hide all, show active
-    for (const tab of tabs) {
-      if (tab.content) tab.content.visible = tab.key === activeKey && !collapsed
-    }
+  function hideTooltip() {
+    tooltipContainer.visible = false
   }
 
-  function refresh() {
-    drawBg()
-    drawTabs()
-    drawContentMask()
-    showActiveContent()
+  function addTab(key, iconCodepoint, tooltipLabel, content) {
+    const tabIndex = tabs.length
+    const btnY = BTN_GAP + tabIndex * (BTN_SIZE + BTN_GAP)
+
+    const btn = new Container()
+    btn.x = BTN_X
+    btn.y = btnY
+    btn.eventMode = 'static'
+    btn.cursor = 'pointer'
+
+    const btnBg = new Graphics()
+    btn.addChild(btnBg)
+
+    const iconText = new Text({
+      text: iconCodepoint,
+      style: {
+        fontFamily: '"Font Awesome 6 Free"',
+        fontWeight: '900',
+        fontSize: 16,
+        fill: 0x778899,
+      },
+    })
+    // center icon in button
+    iconText.x = Math.floor((BTN_SIZE - iconText.width) / 2)
+    iconText.y = Math.floor((BTN_SIZE - iconText.height) / 2)
+    btn.addChild(iconText)
+
+    const tab = { key, iconCodepoint, tooltipLabel, content, open: false, btn, btnBg, iconText, btnY }
+    tabs.push(tab)
+
+    drawBtn(tab)
+
+    // position panel: each tab slot = TAB_BAR_W + tabIndex * PANEL_W
+    content.x = TAB_BAR_W + tabIndex * PANEL_W
+    content.y = 0
+    content.visible = false
+    container.addChild(content)
+
+    // ensure tooltip stays on top after adding content
+    container.setChildIndex(tooltipContainer, container.children.length - 1)
+
+    btn.on('pointerdown', () => {
+      tab.open = !tab.open
+      content.visible = tab.open
+      drawBtn(tab)
+    })
+
+    btn.on('pointerover', () => showTooltip(tooltipLabel, btnY))
+    btn.on('pointerout', () => hideTooltip())
+
+    container.addChildAt(btn, 1)  // just above barBg, below tooltip and panels
+
+    drawBar()
+    return tab
   }
 
-  // adds a tab. content is a PixiJS Container that gets added to the content area.
-  function addTab(key, label, content) {
-    contentArea.addChild(content)
-    // position the content inside the content area with some padding
-    content.x = 8
-    content.y = 4
-    tabs.push({ key, label, tabBtn: null, content })
-
-    // auto-select first tab
-    if (!activeKey) activeKey = key
-    refresh()
+  function resize(newVh) {
+    barH = newVh
+    drawBar()
   }
 
-  function resize(newBounds) {
-    bounds = newBounds
-    container.x = bounds.x
-    container.y = bounds.y
-    refresh()
+  function isOpen(key) {
+    return tabs.find(t => t.key === key)?.open ?? false
   }
 
   function destroy() {
     container.destroy({ children: true })
   }
 
-  refresh()
+  drawBar()
 
-  return {
-    container,
-    addTab,
-    resize,
-    destroy,
-    get contentH() { return collapsed ? 0 : bounds.h - TAB_H },
-  }
+  return { container, addTab, resize, isOpen, destroy }
 }

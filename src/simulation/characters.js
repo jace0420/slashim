@@ -1,6 +1,13 @@
 import Chance from 'chance'
 import { Tile } from '../generation/tileTypes.js'
 import {
+  deltaRelationship,
+  getRelationship,
+  getRelationshipLabel,
+  pickTopicForSpeaker,
+  resolveRelationshipDelta,
+} from './social.js'
+import {
   buildOccupiedSet,
   buildReservedRestSlotSet,
   countOpenNeighbors,
@@ -128,6 +135,9 @@ const BEHAVIOR_MOVE_MULTIPLIERS = {
 const SOFT_STUCK_TICKS = 4
 const HARD_STUCK_TICKS = 9
 
+// how many ticks a character can be chasing a social partner (moving phase) before giving up
+const MAX_SOCIAL_APPROACH_TICKS = 28
+
 // build a jittered needs object for a fresh character
 function initNeeds(rng) {
   const needs = {}
@@ -237,14 +247,6 @@ function canTalk(a, b) {
 // Chebyshev distance between two characters
 function chebyshev(a, b) {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y))
-}
-
-// map tile distance to a conversational verb for the narrative log
-function talkVerb(dist) {
-  if (dist <= 2) return 'quietly chats with'
-  if (dist <= 5) return 'talks to'
-  if (dist <= 8) return 'calls out to'
-  return 'shouts to'
 }
 
 // fill a madlibs topic template with the speaker (A) and listener (B) names
@@ -457,6 +459,7 @@ function chooseSocialPartner(character, characters) {
   const candidates = characters.filter((other) => {
     if (other === character) return false
     if (other.behavior?.key === 'rest') return false
+    if (other.behavior?.phase === 'conversing') return false
     return true
   })
 
@@ -743,23 +746,30 @@ function maybeChooseBehavior(character, context) {
 
 // pick an opening topic, set up the conversation object on both parties, emit the begin event
 function beginConversation(character, partner, context) {
-  const { rng, topics, beats, cast, tickIndex, events } = context
+  const { rng, topics, beats, cast, tickIndex, events, archetypePreferences } = context
   const castEntry = cast[character.castIndex]
   const extraversion = castEntry?.personality?.extraversion ?? 3
   const duration = Math.round(rng.integer({ min: 30, max: 65 }) * (extraversion / 3))
   const beatInterval = rng.integer({ min: 15, max: 25 })
 
-  const dist = chebyshev(character, partner)
-  const verb = talkVerb(dist)
-  const openerPool = topics.length > 0 ? topics : null
-  const openingTopic = openerPool
-    ? pickTalkLine(rng, openerPool, character.name, partner.name)
-    : `${character.name} talks to ${partner.name}`
+  const hasCategorizedTopics = topics && typeof topics === 'object' && !Array.isArray(topics) && topics.categories
+  let openingTopic, openingCategory
+
+  if (hasCategorizedTopics) {
+    const result = pickTopicForSpeaker(castEntry?.archetype, topics.categories, archetypePreferences, character.name, partner.name, rng)
+    openingTopic = result.text
+    openingCategory = result.category
+  } else {
+    const pool = Array.isArray(topics) && topics.length > 0 ? topics : null
+    openingTopic = pool ? pickTalkLine(rng, pool, character.name, partner.name) : `${character.name} talks to ${partner.name}`
+    openingCategory = null
+  }
 
   const conversationObj = {
     partnerCastIndex: partner.castIndex,
     startedTick: tickIndex,
     currentTopic: openingTopic,
+    currentTopicCategory: openingCategory,
     lastBeatTick: tickIndex,
     beatInterval,
     beatCount: 0,
@@ -794,7 +804,7 @@ function beginConversation(character, partner, context) {
     }
   }
 
-  events.push({ type: 'social-begin', text: `${openingTopic} (${verb})` })
+  events.push({ type: 'social-begin', text: openingTopic })
 }
 
 function tickWandering(character, context) {
@@ -865,7 +875,7 @@ function endConversation(character, partner) {
 }
 
 function tickSocial(character, context) {
-  const { tickIndex, rng, topics, beats, events, characters } = context
+  const { tickIndex, rng, topics, beats, events, characters, cast, relationships, archetypePreferences } = context
   const partner = characters.find((candidate) => candidate.castIndex === character.behavior.target?.partnerCastIndex)
 
   if (!partner) {
@@ -912,17 +922,71 @@ function tickSocial(character, context) {
     // beat: emit a new topic or flavor line every beatInterval ticks
     const conv = character.conversation
     if (conv && tickIndex - conv.lastBeatTick >= conv.beatInterval) {
+      const hasCategorizedTopics = topics && typeof topics === 'object' && !Array.isArray(topics) && topics.categories
       const useFlavorBeat = beats.length > 0 && rng.bool({ likelihood: 40 })
-      const pool = useFlavorBeat ? beats : topics
-      if (pool.length > 0) {
-        const beatText = pickTalkLine(rng, pool, character.name, partner.name)
+
+      if (useFlavorBeat) {
+        // flavor beats: no relationship effect
+        const beatText = pickTalkLine(rng, beats, character.name, partner.name)
         conv.currentTopic = beatText
+        conv.currentTopicCategory = null
         conv.lastBeatTick = tickIndex
         conv.beatCount += 1
         conv.beatInterval = rng.integer({ min: 15, max: 25 })
-        // mirror onto partner so their tooltip stays in sync
         if (partner.conversation) {
           partner.conversation.currentTopic = beatText
+          partner.conversation.currentTopicCategory = null
+          partner.conversation.lastBeatTick = tickIndex
+          partner.conversation.beatCount = conv.beatCount
+          partner.conversation.beatInterval = conv.beatInterval
+        }
+        events.push({ type: 'social-topic-beat', text: beatText })
+      } else if (hasCategorizedTopics) {
+        // categorized topic beat: resolve relationship delta for both parties
+        const speakerCast = cast[character.castIndex]
+        const listenerCast = cast[partner.castIndex]
+        const speakerArchetype = speakerCast?.archetype
+        const listenerArchetype = listenerCast?.archetype
+        const { text: beatText, category: beatCategory } = pickTopicForSpeaker(speakerArchetype, topics.categories, archetypePreferences, character.name, partner.name, rng)
+        conv.currentTopic = beatText
+        conv.currentTopicCategory = beatCategory
+        conv.lastBeatTick = tickIndex
+        conv.beatCount += 1
+        conv.beatInterval = rng.integer({ min: 15, max: 25 })
+        if (partner.conversation) {
+          partner.conversation.currentTopic = beatText
+          partner.conversation.currentTopicCategory = beatCategory
+          partner.conversation.lastBeatTick = tickIndex
+          partner.conversation.beatCount = conv.beatCount
+          partner.conversation.beatInterval = conv.beatInterval
+        }
+        events.push({ type: 'social-topic-beat', text: beatText })
+
+        // relationship delta: listener reacts to the topic category
+        const delta = resolveRelationshipDelta(beatCategory, listenerArchetype, archetypePreferences, rng)
+        if (delta !== 0) {
+          const change = deltaRelationship(relationships, character.castIndex, partner.castIndex, delta)
+          if (change.labelChanged) {
+            events.push({
+              type: 'social-relationship-changed',
+              nameA: character.name,
+              nameB: partner.name,
+              label: change.newLabel,
+              direction: delta > 0 ? 'positive' : 'negative',
+            })
+          }
+        }
+      } else if (Array.isArray(topics) && topics.length > 0) {
+        // plain array fallback: no relationship effect
+        const beatText = pickTalkLine(rng, topics, character.name, partner.name)
+        conv.currentTopic = beatText
+        conv.currentTopicCategory = null
+        conv.lastBeatTick = tickIndex
+        conv.beatCount += 1
+        conv.beatInterval = rng.integer({ min: 15, max: 25 })
+        if (partner.conversation) {
+          partner.conversation.currentTopic = beatText
+          partner.conversation.currentTopicCategory = null
           partner.conversation.lastBeatTick = tickIndex
           partner.conversation.beatCount = conv.beatCount
           partner.conversation.beatInterval = conv.beatInterval
@@ -942,10 +1006,26 @@ function tickSocial(character, context) {
     character.behavior.phase = 'moving'
   }
 
+  // hard timeout — if we've been chasing the partner for too long without a conversation starting,
+  // give up with a longer cooldown so the character doesn't spin forever on the same target
+  if (tickIndex - character.behavior.startedTick > MAX_SOCIAL_APPROACH_TICKS) {
+    character.behaviorCooldowns.socialUntilTick = tickIndex + 32
+    character.behavior.complete = true
+    return
+  }
+
   if (tickIndex % 4 === 0 || character.behavior.path.length === 0) {
-    const retarget = pickTileNearCharacter(partner, context.mapData, context.occupied, rng, 2)
+    // try close radius first; widen if the nearby tiles are all packed
+    let retarget = pickTileNearCharacter(partner, context.mapData, context.occupied, rng, 2)
+    if (!retarget) retarget = pickTileNearCharacter(partner, context.mapData, context.occupied, rng, 5)
+
     if (retarget) {
       character.behavior.path = findPath(context.mapData, character, retarget, context.occupied) ?? []
+    } else if (canTalk(character, partner) && chebyshev(character, partner) <= 5) {
+      // all tiles near partner are blocked but they're in the same room and close enough —
+      // start the conversation from wherever we are rather than staying stuck forever
+      beginConversation(character, partner, context)
+      return
     }
   }
 
@@ -954,6 +1034,9 @@ function tickSocial(character, context) {
     return
   }
 
+  // no path — apply a short cooldown before completing so we don't immediately re-enter
+  // social behavior targeting the same unreachable partner next tick
+  character.behaviorCooldowns.socialUntilTick = tickIndex + 18
   character.behavior.complete = true
 }
 
@@ -1026,7 +1109,7 @@ export function renderCharacters(characters, asciiGrid, mapData) {
 
 // process one simulation tick — each character may move one tile.
 // returns an array of narrative events that happened this tick.
-export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, tickIndex = 0, topics = [], beats = [], cast = []) {
+export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, tickIndex = 0, topics = [], beats = [], cast = [], relationships = {}, archetypePreferences = {}) {
   const events = []
   const occupied = buildOccupiedSet(characters)
 
@@ -1047,6 +1130,8 @@ export function tickCharacters(characters, mapData, asciiGrid, rng, moveChance, 
       moveChance,
       occupied,
       events,
+      relationships,
+      archetypePreferences,
       reservedSlotKeys: buildReservedRestSlotSet(characters, c.castIndex),
     }
 
